@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+:root {
+  --color-bg: #0a0a0f;
+  --color-board: #0f1729;
+  --color-tile-light: #1a2744;
+  --color-tile-shadow: #0d0d1a;
+  --color-tile-stronghold: #1a0a0a;
+  --color-tile-broken: #1a1a0a;
+  --color-tile-high: #0a1a1a;
+  --color-jerusalem: #c9a84c;
+  --color-faith: #d4a843;
+  --color-cube: #1a1a1a;
+  --color-apostle: #2563eb;
+  --color-prophet: #d97706;
+  --color-evangelist: #059669;
+  --color-pastor: #dc2626;
+  --color-teacher: #7c3aed;
+
+  font-family: system-ui, -apple-system, sans-serif;
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: #e5e7eb;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
