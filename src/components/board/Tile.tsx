@@ -14,14 +14,6 @@ const TILE_BG: Record<string, string> = {
   Jerusalem: 'bg-amber-800/30 border-amber-500/60',
 };
 
-const TILE_ICONS: Record<string, string> = {
-  Jerusalem: '✦',
-  Stronghold: '🏛',
-  HighPlace: '⛰',
-  BrokenGround: '⚠',
-  Light: '',
-  Shadow: '',
-};
 
 export function Tile({ tile }: { tile: TileState }) {
   const state = useGameStore((s) => s.state);
@@ -84,10 +76,21 @@ export function Tile({ tile }: { tile: TileState }) {
       whileHover={{ scale: 1.06 }}
       whileTap={{ scale: 0.94 }}
     >
-      {/* Tile type icon */}
-      {!tile.faceDown && TILE_ICONS[tile.type] && (
-        <div className="absolute top-0 left-0.5 text-[9px] opacity-50">
-          {TILE_ICONS[tile.type]}
+      {/* Tile type label — bottom left, always visible when revealed */}
+      {!tile.faceDown && tile.type !== 'Light' && (
+        <div className={`absolute bottom-0 left-0 px-1 text-[8px] font-bold rounded-tr-md ${
+          tile.type === 'Stronghold' ? 'bg-red-800/80 text-red-200' :
+          tile.type === 'BrokenGround' ? 'bg-amber-800/80 text-amber-200' :
+          tile.type === 'HighPlace' ? 'bg-cyan-800/80 text-cyan-200' :
+          tile.type === 'Jerusalem' ? 'bg-amber-600/80 text-amber-100' :
+          tile.type === 'Shadow' ? 'bg-purple-900/80 text-purple-300' :
+          'bg-slate-700/80 text-slate-300'
+        }`}>
+          {tile.type === 'Stronghold' ? `L${tile.strongholdLayers}` :
+           tile.type === 'BrokenGround' ? '2AP' :
+           tile.type === 'HighPlace' ? '+1A' :
+           tile.type === 'Jerusalem' ? '✦' :
+           tile.type === 'Shadow' ? 'SHD' : ''}
         </div>
       )}
 
@@ -105,13 +108,6 @@ export function Tile({ tile }: { tile: TileState }) {
           'bg-slate-600 text-slate-300'
         }`}>
           {tile.shadowCubes}
-        </div>
-      )}
-
-      {/* Stronghold pillar */}
-      {tile.strongholdLayers > 0 && (
-        <div className="absolute bottom-0 left-0.5 text-[8px] text-red-400/80 font-bold font-mono">
-          L{tile.strongholdLayers}
         </div>
       )}
 
