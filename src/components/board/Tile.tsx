@@ -75,6 +75,8 @@ export function Tile({ tile }: { tile: TileState }) {
         ${isValidTarget ? 'ring-2 ring-green-400/80 z-10' : ''}
         ${isCurrentPlayerTile && state.phase === 'Action' && !isSelected ? 'ring-2 ring-amber-400/60 animate-pulse' : ''}
         ${isJerusalem && !tile.faceDown ? 'shadow-[0_0_20px_rgba(202,138,4,0.25)]' : ''}
+        ${tile.shadowCubes >= 4 ? 'shadow-[0_0_12px_rgba(239,68,68,0.6)] border-red-500/60' : ''}
+        ${tile.shadowCubes === 3 ? 'shadow-[0_0_8px_rgba(239,68,68,0.3)] border-red-700/40' : ''}
       `}
       onClick={handleClick}
       onMouseEnter={() => setHovered(true)}
@@ -94,8 +96,8 @@ export function Tile({ tile }: { tile: TileState }) {
         <div className="absolute inset-0 flex items-center justify-center text-slate-600 text-base font-serif">?</div>
       )}
 
-      {/* Shadow cubes — top right corner */}
-      {tile.shadowCubes > 0 && !tile.faceDown && (
+      {/* Shadow cubes — ALWAYS visible (darkness is visible even on unexplored tiles) */}
+      {tile.shadowCubes > 0 && (
         <div className="absolute top-0.5 right-0.5 flex gap-px">
           {Array.from({ length: Math.min(tile.shadowCubes, 4) }).map((_, i) => (
             <div

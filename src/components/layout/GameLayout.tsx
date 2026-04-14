@@ -13,6 +13,7 @@ import { GameOverModal } from '../modals/GameOverModal';
 import { PassAndPlayScreen } from '../modals/PassAndPlayScreen';
 import { PhaseResolutionOverlay } from '../modals/PhaseResolutionOverlay';
 import { RulesReference } from '../modals/RulesReference';
+import { GameProgress } from '../hud/GameProgress';
 import { TOTAL_STRONGHOLDS } from '../../engine/constants';
 
 export function GameLayout() {
@@ -52,6 +53,9 @@ export function GameLayout() {
           </button>
         </div>
       </div>
+
+      {/* Game progress bar */}
+      <GameProgress />
 
       {/* Main content */}
       <div className="flex-1 flex flex-col lg:flex-row gap-3 p-3 overflow-hidden">
