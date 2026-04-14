@@ -23,6 +23,37 @@ const DEFAULT_CHARACTERS: Record<number, CharacterId[]> = {
   5: ['pastor', 'apostle', 'evangelist', 'prophet', 'teacher'],
 };
 
+/** Run a single game and return a lightweight final state (log stripped). */
+function runOneGame(
+  gameConfig: GameConfig,
+  weights: typeof STRATEGIES[StrategyId],
+  strategy: StrategyId,
+  maxRounds: number
+): GameState {
+  let state = createGameState(gameConfig);
+  // Strip the log during simulation — we don't need it for stats
+  state = { ...state, log: [] };
+
+  for (let round = 0; round < maxRounds; round++) {
+    if (state.status !== 'playing') break;
+
+    state = executeFullRound(state, (s, playerIndex) =>
+      aiPlayerTurn(s, playerIndex, weights, strategy)
+    );
+
+    // Periodically trim the log to avoid memory bloat
+    if (state.log.length > 50) {
+      state = { ...state, log: state.log.slice(-10) };
+    }
+  }
+
+  if (state.status === 'playing') {
+    state = { ...state, status: 'lost', lossReason: 'Timed out — exceeded max rounds.' };
+  }
+
+  return state;
+}
+
 /** Run a batch of simulated games and return aggregated statistics. */
 export function runSimulation(config: SimulationConfig): SimulationResults {
   const collector = new StatsCollector();
@@ -38,22 +69,7 @@ export function runSimulation(config: SimulationConfig): SimulationResults {
       seed: baseSeed + i,
     };
 
-    let state = createGameState(gameConfig);
-
-    // Play until completion or max rounds
-    for (let round = 0; round < maxRounds; round++) {
-      if (state.status !== 'playing') break;
-
-      state = executeFullRound(state, (s, playerIndex) =>
-        aiPlayerTurn(s, playerIndex, weights, config.strategy)
-      );
-    }
-
-    // If still playing after max rounds, count as loss
-    if (state.status === 'playing') {
-      state = { ...state, status: 'lost', lossReason: 'Timed out — exceeded max rounds.' };
-    }
-
+    const state = runOneGame(gameConfig, weights, config.strategy, maxRounds);
     collector.record(state);
 
     if (config.onProgress) {
@@ -64,7 +80,7 @@ export function runSimulation(config: SimulationConfig): SimulationResults {
   return collector.getResults();
 }
 
-/** Run a single game and return the final state (for replay/debugging). */
+/** Run a single game with full log (for replay/debugging). */
 export function runSingleGame(
   gameConfig: GameConfig,
   strategy: StrategyId = 'balanced',
@@ -75,7 +91,6 @@ export function runSingleGame(
 
   for (let round = 0; round < maxRounds; round++) {
     if (state.status !== 'playing') break;
-
     state = executeFullRound(state, (s, playerIndex) =>
       aiPlayerTurn(s, playerIndex, weights, strategy)
     );
