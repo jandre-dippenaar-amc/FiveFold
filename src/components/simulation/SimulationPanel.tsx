@@ -3,8 +3,11 @@ import type { SimulationConfig } from '../../simulation/runner';
 import type { SimulationResults } from '../../simulation/stats';
 import type { Difficulty } from '../../engine/types';
 import type { StrategyId } from '../../simulation/strategies';
+import { ARMOR_PIECES } from '../../engine/constants';
 import { motion } from 'framer-motion';
 import SimWorker from '../../simulation/worker?worker';
+
+const BATCH_SIZE = 25; // Games per worker — worker is killed after each batch to free memory
 
 export function SimulationPanel({ onBack }: { onBack?: () => void } = {}) {
   const [games, setGames] = useState(100);
@@ -16,49 +19,140 @@ export function SimulationPanel({ onBack }: { onBack?: () => void } = {}) {
   const [results, setResults] = useState<SimulationResults | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const workerRef = useRef<Worker | null>(null);
+  const cancelledRef = useRef(false);
   const startTimeRef = useRef(0);
 
   const run = useCallback(() => {
-    // Terminate any existing worker
     workerRef.current?.terminate();
+    cancelledRef.current = false;
 
     setRunning(true);
     setResults(null);
     setProgress({ completed: 0, total: games });
     startTimeRef.current = Date.now();
 
-    const worker = new SimWorker();
-    workerRef.current = worker;
+    // Accumulate results across batches
+    let completed = 0;
+    let wins = 0, losses = 0;
+    let sumRounds = 0, sumMeter = 0, sumStrongholds = 0, sumCubes = 0, sumEnemies = 0;
+    let maxR = 0, minR = Infinity;
+    const lossReasons: Record<string, number> = {};
+    const armorCounts: Record<string, number> = {};
+    const charFaithSum: Record<string, number> = {};
+    const charFaithCount: Record<string, number> = {};
+    const charElim: Record<string, number> = {};
 
-    worker.onmessage = (e) => {
-      const msg = e.data;
-      if (msg.type === 'progress') {
-        setProgress({ completed: msg.completed, total: msg.total });
-      } else if (msg.type === 'done') {
+    function runNextBatch() {
+      if (cancelledRef.current || completed >= games) {
+        // Finalize
+        const n = completed;
+        if (n === 0) { setRunning(false); return; }
+
+        const armorUnlockRates: Record<string, number> = {};
+        for (const piece of ARMOR_PIECES) {
+          armorUnlockRates[piece.name] = ((armorCounts[piece.id] || 0) / n) * 100;
+        }
+        const characterStats: Record<string, any> = {};
+        for (const cid of Object.keys(charFaithSum)) {
+          characterStats[cid] = {
+            avgFaithAtEnd: charFaithSum[cid] / (charFaithCount[cid] || 1),
+            timesEliminated: charElim[cid] || 0,
+            avgScriptureCardsPlayed: 0,
+          };
+        }
         setElapsed((Date.now() - startTimeRef.current) / 1000);
-        setResults(msg.results);
+        setResults({
+          gamesPlayed: n, wins, losses, winRate: (wins / n) * 100,
+          avgRounds: sumRounds / n, medianRounds: Math.round(sumRounds / n),
+          maxRounds: maxR, minRounds: minR === Infinity ? 0 : minR,
+          lossReasons, avgDarknessMeterAtEnd: sumMeter / n,
+          armorUnlockRates, avgStrongholdsCleansed: sumStrongholds / n,
+          avgTotalCubesRemoved: sumCubes / n, avgEnemiesAtEnd: sumEnemies / n,
+          characterStats,
+        });
         setRunning(false);
-        worker.terminate();
-        workerRef.current = null;
-      } else if (msg.type === 'error') {
-        console.error('Simulation error:', msg.error);
-        setRunning(false);
-        worker.terminate();
-        workerRef.current = null;
+        return;
       }
-    };
 
-    const config: SimulationConfig = {
-      games,
-      playerCount: players,
-      difficulty,
-      strategy,
-      seed: Date.now(),
-    };
-    worker.postMessage(config);
+      const batchSize = Math.min(BATCH_SIZE, games - completed);
+
+      // Spawn a FRESH worker for each batch — old worker's heap gets fully GC'd
+      const worker = new SimWorker();
+      workerRef.current = worker;
+
+      // Catch silent OOM crashes
+      worker.onerror = () => {
+        console.warn(`Worker crashed at batch starting at game ${completed}. Skipping batch.`);
+        worker.terminate();
+        workerRef.current = null;
+        completed += batchSize;
+        setTimeout(runNextBatch, 50);
+      };
+
+      worker.onmessage = (e) => {
+        const msg = e.data;
+        if (msg.type === 'progress') {
+          setProgress({ completed: completed + msg.completed, total: games });
+        } else if (msg.type === 'done') {
+          const r = msg.results as SimulationResults;
+
+          // Merge into running totals
+          wins += r.wins;
+          losses += r.losses;
+          sumRounds += r.avgRounds * batchSize;
+          sumMeter += r.avgDarknessMeterAtEnd * batchSize;
+          sumStrongholds += r.avgStrongholdsCleansed * batchSize;
+          sumCubes += r.avgTotalCubesRemoved * batchSize;
+          sumEnemies += r.avgEnemiesAtEnd * batchSize;
+          if (r.maxRounds > maxR) maxR = r.maxRounds;
+          if (r.minRounds < minR) minR = r.minRounds;
+          for (const [reason, count] of Object.entries(r.lossReasons)) {
+            lossReasons[reason] = (lossReasons[reason] || 0) + count;
+          }
+          for (const [name, rate] of Object.entries(r.armorUnlockRates)) {
+            const id = ARMOR_PIECES.find((p) => p.name === name)?.id;
+            if (id) armorCounts[id] = (armorCounts[id] || 0) + Math.round((rate / 100) * batchSize);
+          }
+          for (const [cid, stats] of Object.entries(r.characterStats)) {
+            charFaithSum[cid] = (charFaithSum[cid] || 0) + stats.avgFaithAtEnd * batchSize;
+            charFaithCount[cid] = (charFaithCount[cid] || 0) + batchSize;
+            charElim[cid] = (charElim[cid] || 0) + stats.timesEliminated;
+          }
+
+          completed += batchSize;
+          setProgress({ completed, total: games });
+
+          // Kill this worker to free its memory
+          worker.terminate();
+          workerRef.current = null;
+
+          // Schedule next batch — gives browser time to GC
+          setTimeout(runNextBatch, 10);
+        } else if (msg.type === 'error') {
+          console.error('Simulation batch error:', msg.error);
+          worker.terminate();
+          workerRef.current = null;
+          // Try to continue with next batch
+          completed += batchSize;
+          setTimeout(runNextBatch, 10);
+        }
+      };
+
+      const config: SimulationConfig = {
+        games: batchSize,
+        playerCount: players,
+        difficulty,
+        strategy,
+        seed: Date.now() + completed,
+      };
+      worker.postMessage(config);
+    }
+
+    runNextBatch();
   }, [games, players, difficulty, strategy]);
 
   const cancel = useCallback(() => {
+    cancelledRef.current = true;
     workerRef.current?.terminate();
     workerRef.current = null;
     setRunning(false);
