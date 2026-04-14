@@ -96,19 +96,15 @@ export function Tile({ tile }: { tile: TileState }) {
         <div className="absolute inset-0 flex items-center justify-center text-slate-600 text-base font-serif">?</div>
       )}
 
-      {/* Shadow cubes — ALWAYS visible (darkness is visible even on unexplored tiles) */}
+      {/* Shadow cubes — bold number badge, ALWAYS visible */}
       {tile.shadowCubes > 0 && (
-        <div className="absolute top-0.5 right-0.5 flex gap-px">
-          {Array.from({ length: Math.min(tile.shadowCubes, 4) }).map((_, i) => (
-            <div
-              key={i}
-              className={`w-[6px] h-[6px] rounded-[1px] ${
-                tile.shadowCubes >= 4 ? 'bg-red-500 animate-pulse' :
-                tile.shadowCubes >= 3 ? 'bg-red-600' :
-                'bg-gray-800'
-              } border border-gray-600/40`}
-            />
-          ))}
+        <div className={`absolute top-0 right-0 min-w-[18px] h-[18px] rounded-bl-md flex items-center justify-center text-[10px] font-bold ${
+          tile.shadowCubes >= 4 ? 'bg-red-600 text-white animate-pulse' :
+          tile.shadowCubes >= 3 ? 'bg-red-700 text-red-100' :
+          tile.shadowCubes >= 2 ? 'bg-amber-800 text-amber-200' :
+          'bg-slate-600 text-slate-300'
+        }`}>
+          {tile.shadowCubes}
         </div>
       )}
 
