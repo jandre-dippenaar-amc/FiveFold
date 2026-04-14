@@ -41,10 +41,13 @@ function runOneGame(
       aiPlayerTurn(s, playerIndex, weights, strategy)
     );
 
-    // Periodically trim the log to avoid memory bloat
-    if (state.log.length > 50) {
-      state = { ...state, log: state.log.slice(-10) };
-    }
+    // Aggressively strip accumulated data to keep memory flat
+    state = {
+      ...state,
+      log: [],
+      darknessDiscard: [],
+      scriptureDiscard: [],
+    };
   }
 
   if (state.status === 'playing') {
@@ -58,7 +61,7 @@ function runOneGame(
 export function runSimulation(config: SimulationConfig): SimulationResults {
   const collector = new StatsCollector();
   const weights = STRATEGIES[config.strategy];
-  const maxRounds = config.maxRoundsPerGame || 100;
+  const maxRounds = config.maxRoundsPerGame || 50;
   const baseSeed = config.seed ?? Date.now();
 
   for (let i = 0; i < config.games; i++) {

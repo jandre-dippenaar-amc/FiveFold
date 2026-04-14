@@ -7,7 +7,7 @@ import { ARMOR_PIECES } from '../../engine/constants';
 import { motion } from 'framer-motion';
 import SimWorker from '../../simulation/worker?worker';
 
-const BATCH_SIZE = 25; // Games per worker — worker is killed after each batch to free memory
+const BATCH_SIZE = 10; // Games per worker — worker is killed after each batch to free memory
 
 export function SimulationPanel({ onBack }: { onBack?: () => void } = {}) {
   const [games, setGames] = useState(100);
@@ -80,9 +80,19 @@ export function SimulationPanel({ onBack }: { onBack?: () => void } = {}) {
       const worker = new SimWorker();
       workerRef.current = worker;
 
-      // Catch silent OOM crashes
+      // Watchdog timer — if worker doesn't respond in 5s, it OOM'd silently
+      const watchdog = setTimeout(() => {
+        console.warn(`Worker timed out at game ${completed}. Killing and skipping batch.`);
+        worker.terminate();
+        workerRef.current = null;
+        completed += batchSize;
+        setTimeout(runNextBatch, 50);
+      }, 5000);
+
+      // Catch explicit crashes
       worker.onerror = () => {
-        console.warn(`Worker crashed at batch starting at game ${completed}. Skipping batch.`);
+        clearTimeout(watchdog);
+        console.warn(`Worker crashed at game ${completed}. Skipping batch.`);
         worker.terminate();
         workerRef.current = null;
         completed += batchSize;
@@ -90,6 +100,7 @@ export function SimulationPanel({ onBack }: { onBack?: () => void } = {}) {
       };
 
       worker.onmessage = (e) => {
+        clearTimeout(watchdog); // Worker is alive
         const msg = e.data;
         if (msg.type === 'progress') {
           setProgress({ completed: completed + msg.completed, total: games });
