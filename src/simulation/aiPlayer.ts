@@ -21,14 +21,8 @@ import {
 import { randomInt } from '../utils/random';
 import type { StrategyId } from './strategies';
 
-interface ScoredAction {
-  execute: (state: GameState) => GameState;
-  score: number;
-  label: string;
-}
-
-// Track last position to avoid oscillation
-const lastPositions = new Map<string, Coord>();
+// Anti-oscillation: track each player's previous position
+const prevPositions = new Map<string, Coord>();
 
 /** AI player: takes a full turn using goal-directed planning. */
 export function aiPlayerTurn(
@@ -40,119 +34,128 @@ export function aiPlayerTurn(
   const player = state.players[playerIndex];
   if (player.isEliminated || state.status !== 'playing') return state;
 
-  // Use free actions first
+  // Free actions first
   state = useFreeActions(state, player.id, weights, strategyId);
 
-  if (strategyId === 'random') {
-    return randomTurn(state, player.id);
+  if (strategyId === 'random') return randomTurn(state, player.id);
+
+  // CRITICAL: If all strongholds are cleared, RUSH to Jerusalem
+  if (state.strongholdsRemaining === 0) {
+    return rushJerusalem(state, player.id);
   }
 
-  // Goal-directed turn: pick a goal, then spend actions toward it
-  return goalDirectedTurn(state, player.id, weights);
+  return tacticalTurn(state, player.id);
 }
 
-/** Goal-directed AI: pick a target tile, move there, then act. */
-function goalDirectedTurn(state: GameState, playerId: string, _weights: StrategyWeights): GameState {
-  const player = getPlayer(state, playerId);
+// ── Jerusalem Rush Mode ──────────────────────────────────────────────
 
-  // 1. If on a tile with cubes/stronghold, cleanse first
-  let tile = getTile(state.board, player.position);
-  while ((tile.shadowCubes > 0 || tile.strongholdLayers > 0) && state.actionsRemaining > 0 && state.status === 'playing') {
-    if (canCleanse(state, playerId).valid) {
-      state = executeCleanse(state, playerId);
-      tile = getTile(state.board, getPlayer(state, playerId).position);
-    } else break;
-  }
-
-  // 2. If on a tile with an enemy, battle it
-  for (const enemy of [...state.enemies]) {
-    const p = getPlayer(state, playerId);
-    if (coordEqual(p.position, enemy.position) && state.actionsRemaining > 0 && state.status === 'playing') {
-      if (canBattle(state, playerId, enemy.id).valid) {
-        state = executeBattle(state, playerId, enemy.id);
-      }
-    }
-  }
-
-  // 3. If low on faith (<=2), pray
-  let currentPlayer = getPlayer(state, playerId);
-  while (currentPlayer.faithCurrent <= 2 && state.actionsRemaining > 0 && canPray(state, playerId).valid) {
-    state = executePray(state, playerId);
-    currentPlayer = getPlayer(state, playerId);
-  }
-
-  // 4. Pick a target and move toward it
-  if (state.actionsRemaining > 0 && state.status === 'playing') {
-    const target = pickGoalTile(state, playerId);
-    if (target) {
-      state = moveToward(state, playerId, target);
-    }
-  }
-
-  // 5. Cleanse at new position if possible
-  tile = getTile(state.board, getPlayer(state, playerId).position);
-  while ((tile.shadowCubes > 0 || tile.strongholdLayers > 0) && state.actionsRemaining > 0 && state.status === 'playing') {
-    if (canCleanse(state, playerId).valid) {
-      state = executeCleanse(state, playerId);
-      tile = getTile(state.board, getPlayer(state, playerId).position);
-    } else break;
-  }
-
-  // 6. Battle at new position
-  for (const enemy of [...state.enemies]) {
-    const p = getPlayer(state, playerId);
-    if (coordEqual(p.position, enemy.position) && state.actionsRemaining > 0 && state.status === 'playing') {
-      if (canBattle(state, playerId, enemy.id).valid) {
-        state = executeBattle(state, playerId, enemy.id);
-      }
-    }
-  }
-
-  // 7. Spend remaining actions: encourage nearby low-faith players, or pray
+/** All strongholds cleared — every action goes to reaching Jerusalem. */
+function rushJerusalem(state: GameState, playerId: string): GameState {
   while (state.actionsRemaining > 0 && state.status === 'playing') {
-    currentPlayer = getPlayer(state, playerId);
+    const player = getPlayer(state, playerId);
 
-    // Encourage adjacent player with low faith
-    let encouraged = false;
-    if (currentPlayer.faithCurrent > 3) {
-      for (const other of getAlivePlayers(state)) {
-        if (other.id !== playerId && other.faithCurrent <= 2) {
-          if (canEncourage(state, playerId, other.id).valid) {
-            state = executeEncourage(state, playerId, other.id);
-            encouraged = true;
-            break;
-          }
-        }
+    // Already on Jerusalem? Done.
+    if (coordEqual(player.position, JERUSALEM_COORD)) {
+      // Pray if low on faith, otherwise just end turn
+      if (player.faithCurrent <= 2 && canPray(state, playerId).valid) {
+        state = executePray(state, playerId);
+      } else {
+        break;
+      }
+      continue;
+    }
+
+    // Move toward Jerusalem
+    const stepped = stepTowardTarget(state, playerId, JERUSALEM_COORD);
+    if (stepped) {
+      state = stepped;
+    } else {
+      // Can't move (maybe blocked by shadow tile with no faith)
+      if (canPray(state, playerId).valid) {
+        state = executePray(state, playerId);
+      } else {
+        break;
       }
     }
-    if (encouraged) continue;
+  }
+  return state;
+}
 
-    // Pray if below max
-    if (canPray(state, playerId).valid) {
+// ── Tactical Turn (normal gameplay) ──────────────────────────────────
+
+function tacticalTurn(state: GameState, playerId: string): GameState {
+  // Step 1: Cleanse current tile if it has cubes or stronghold layers
+  state = cleanseCurrentTile(state, playerId);
+
+  // Step 2: Battle enemies on current tile
+  state = battleCurrentTile(state, playerId);
+
+  // Step 3: If faith is critically low (<=2), pray once
+  const p1 = getPlayer(state, playerId);
+  if (p1.faithCurrent <= 2 && state.actionsRemaining > 0 && canPray(state, playerId).valid) {
+    state = executePray(state, playerId);
+  }
+
+  // Step 4: Pick best goal and move toward it (use at most half remaining actions for movement)
+  const moveActions = Math.min(Math.ceil(state.actionsRemaining / 2), 3);
+  if (state.actionsRemaining > 0 && state.status === 'playing') {
+    const goal = pickGoal(state, playerId);
+    if (goal) {
+      state = moveTowardTarget(state, playerId, goal, moveActions);
+    }
+  }
+
+  // Step 5: Cleanse and battle at new position
+  state = cleanseCurrentTile(state, playerId);
+  state = battleCurrentTile(state, playerId);
+
+  // Step 6: Use remaining actions productively
+  while (state.actionsRemaining > 0 && state.status === 'playing') {
+    const cur = getPlayer(state, playerId);
+
+    // Move to adjacent tile with cubes and cleanse it
+    const movedToCleanse = moveAndCleanse(state, playerId);
+    if (movedToCleanse) { state = movedToCleanse; continue; }
+
+    // Encourage a nearby low-faith ally
+    if (cur.faithCurrent > 4) {
+      const encouraged = tryEncourage(state, playerId);
+      if (encouraged) { state = encouraged; continue; }
+    }
+
+    // Pray if below 70% faith
+    if (cur.faithCurrent < cur.faithMax * 0.7 && canPray(state, playerId).valid) {
       state = executePray(state, playerId);
       continue;
     }
 
-    // Try to move+cleanse somewhere nearby
-    const moved = moveToNearbyDanger(state, playerId);
-    if (moved) {
-      state = moved;
-      continue;
+    // Move toward the next best goal
+    const goal2 = pickGoal(state, playerId);
+    if (goal2) {
+      const stepped = stepTowardTarget(state, playerId, goal2);
+      if (stepped) { state = stepped; continue; }
     }
 
-    break; // Nothing useful to do
+    // Nothing productive — end turn early
+    break;
   }
 
   return state;
 }
 
-/** Pick the best tile to move toward based on priorities. */
-function pickGoalTile(state: GameState, playerId: string): Coord | null {
+// ── Goal Selection ───────────────────────────────────────────────────
+
+function pickGoal(state: GameState, playerId: string): Coord | null {
   const player = getPlayer(state, playerId);
   const pos = player.position;
 
-  // Score every tile on the board
-  const candidates: Array<{ coord: Coord; score: number }> = [];
+  let bestCoord: Coord | null = null;
+  let bestScore = -Infinity;
+
+  // Which tiles have other players heading toward them?
+  const otherPlayerPositions = getAlivePlayers(state)
+    .filter((p) => p.id !== playerId)
+    .map((p) => p.position);
 
   for (let r = 0; r < BOARD_SIZE; r++) {
     for (let c = 0; c < BOARD_SIZE; c++) {
@@ -161,126 +164,147 @@ function pickGoalTile(state: GameState, playerId: string): Coord | null {
 
       const tile = getTile(state.board, coord);
       const dist = manhattanDistance(pos, coord);
+      if (dist > 6) continue; // Too far to be a good goal
+
       let score = 0;
 
-      // HIGH PRIORITY: tiles about to overflow (3 cubes)
-      if (tile.shadowCubes >= 3) score += 100 - dist * 10;
-      // MEDIUM: tiles with 2 cubes
-      else if (tile.shadowCubes >= 2) score += 50 - dist * 8;
-      // Tiles with 1 cube
-      else if (tile.shadowCubes >= 1) score += 20 - dist * 5;
+      // Cube urgency: 3+ cubes = overflow danger
+      if (tile.shadowCubes >= 3) score += 200;
+      else if (tile.shadowCubes >= 2) score += 80;
 
-      // Strongholds
-      if (tile.strongholdLayers > 0) score += 60 - dist * 5;
+      // Strongholds: the win condition
+      if (tile.strongholdLayers > 0) {
+        score += 120;
+        // Bonus for strongholds with fewer layers (closer to clearing)
+        score += (4 - tile.strongholdLayers) * 20;
+      }
 
-      // Enemies (especially Principalities)
+      // Enemies
       for (const enemy of state.enemies) {
         if (coordEqual(enemy.position, coord)) {
-          if (enemy.tier === 'Principality') score += 80 - dist * 5;
-          else if (enemy.tier === 'Power') score += 40 - dist * 5;
-          else score += 20 - dist * 5;
+          score += enemy.tier === 'Principality' ? 150 : enemy.tier === 'Power' ? 60 : 30;
         }
       }
 
-      // Late game: Jerusalem convergence becomes the top priority
-      if (state.strongholdsRemaining === 0) {
-        // All strongholds clear — ONLY goal is Jerusalem
-        if (coordEqual(coord, JERUSALEM_COORD)) score += 500;
-        else score = -100; // nothing else matters
-      } else if (state.strongholdsRemaining <= 2) {
-        if (coordEqual(coord, JERUSALEM_COORD)) score += 150 - dist * 15;
+      // Distance penalty — prefer closer targets
+      score -= dist * 15;
+
+      // Avoid targets another player is already on
+      if (otherPlayerPositions.some((p) => coordEqual(p, coord))) {
+        score -= 40;
       }
 
-      // Penalize tiles that are too far away
-      if (dist > state.actionsRemaining + 1) score -= 50;
-
-      // Avoid tiles another player is already heading toward
-      const otherPlayers = getAlivePlayers(state).filter((p) => p.id !== playerId);
-      for (const other of otherPlayers) {
-        if (coordEqual(other.position, coord)) score -= 20; // someone's already there
+      // Late game: start favoring Jerusalem
+      if (state.strongholdsRemaining <= 2 && coordEqual(coord, JERUSALEM_COORD)) {
+        score += 200;
       }
 
-      if (score > 0) candidates.push({ coord, score });
+      if (score > bestScore) {
+        bestScore = score;
+        bestCoord = coord;
+      }
     }
   }
 
-  candidates.sort((a, b) => b.score - a.score);
-  return candidates.length > 0 ? candidates[0].coord : null;
+  return bestScore > 0 ? bestCoord : null;
 }
 
-/** Move the player one step toward a target tile, avoiding oscillation and unnecessary shadow entry. */
-function moveToward(state: GameState, playerId: string, target: Coord): GameState {
-  const maxSteps = Math.min(state.actionsRemaining, 3); // save at least 1 action for cleansing
+// ── Movement ─────────────────────────────────────────────────────────
 
+/** Move up to maxSteps toward a target, avoiding oscillation and unnecessary shadow entry. */
+function moveTowardTarget(state: GameState, playerId: string, target: Coord, maxSteps: number): GameState {
   for (let step = 0; step < maxSteps; step++) {
-    if (state.actionsRemaining <= 0 || state.status !== 'playing') break;
-
-    const player = getPlayer(state, playerId);
-    if (coordEqual(player.position, target)) break;
-
-    const charDef = CHARACTERS[player.characterId];
-    const adjacent = charDef.canMoveDiagonally
-      ? getAllAdjacent(player.position)
-      : getOrthogonalAdjacent(player.position);
-
-    // Score each adjacent tile by distance to target and safety
-    let bestMove: Coord | null = null;
-    let bestScore = -Infinity;
-
-    for (const adj of adjacent) {
-      const check = canMove(state, playerId, adj);
-      if (!check.valid) continue;
-
-      const distToTarget = manhattanDistance(adj, target);
-      const adjTile = getTile(state.board, adj);
-      let moveScore = -distToTarget * 10;
-
-      // Penalty for entering shadow tiles (costs faith)
-      if (adjTile.type === 'Shadow' && adjTile.shadowCubes > 0) {
-        // Only enter if that's our target or we have enough faith
-        if (!coordEqual(adj, target) && player.faithCurrent <= 3) {
-          moveScore -= 100; // avoid unless necessary
-        } else {
-          moveScore -= 5;
-        }
-      }
-
-      // Penalty for oscillation — don't go back where we just were
-      const lastPos = lastPositions.get(playerId);
-      if (lastPos && coordEqual(adj, lastPos)) {
-        moveScore -= 30;
-      }
-
-      if (moveScore > bestScore) {
-        bestScore = moveScore;
-        bestMove = adj;
-      }
-    }
-
-    if (bestMove) {
-      lastPositions.set(playerId, player.position);
-      state = executeMove(state, playerId, bestMove);
-    } else {
-      break;
-    }
+    const stepped = stepTowardTarget(state, playerId, target);
+    if (!stepped) break;
+    state = stepped;
+    // Stop if we arrived
+    if (coordEqual(getPlayer(state, playerId).position, target)) break;
   }
-
   return state;
 }
 
-/** Try to move to a nearby tile that has cubes and cleanse it. */
-function moveToNearbyDanger(state: GameState, playerId: string): GameState | null {
+/** Take one step toward a target. Returns null if no valid move. */
+function stepTowardTarget(state: GameState, playerId: string, target: Coord): GameState | null {
+  if (state.actionsRemaining <= 0 || state.status !== 'playing') return null;
   const player = getPlayer(state, playerId);
-  if (state.actionsRemaining < 2) return null; // need at least 1 move + 1 cleanse
+  if (coordEqual(player.position, target)) return null;
 
   const charDef = CHARACTERS[player.characterId];
   const adjacent = charDef.canMoveDiagonally
     ? getAllAdjacent(player.position)
     : getOrthogonalAdjacent(player.position);
 
-  // Find adjacent tile with cubes
+  let bestMove: Coord | null = null;
+  let bestScore = -Infinity;
+
+  for (const adj of adjacent) {
+    if (!canMove(state, playerId, adj).valid) continue;
+
+    const distToTarget = manhattanDistance(adj, target);
+    const tile = getTile(state.board, adj);
+    let score = -distToTarget * 10;
+
+    // Heavy penalty for entering shadow tiles unnecessarily (costs faith)
+    if (tile.type === 'Shadow' && tile.shadowCubes > 0 && !coordEqual(adj, target)) {
+      if (player.faithCurrent <= 3) score -= 200;
+      else score -= 10;
+    }
+
+    // Anti-oscillation
+    const prev = prevPositions.get(playerId);
+    if (prev && coordEqual(adj, prev)) score -= 50;
+
+    // Bonus for tiles with cubes (can cleanse on the way)
+    if (tile.shadowCubes >= 2) score += 15;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestMove = adj;
+    }
+  }
+
+  if (!bestMove) return null;
+  prevPositions.set(playerId, player.position);
+  return executeMove(state, playerId, bestMove);
+}
+
+// ── Action Helpers ───────────────────────────────────────────────────
+
+function cleanseCurrentTile(state: GameState, playerId: string): GameState {
+  const tile = getTile(state.board, getPlayer(state, playerId).position);
+  // Only cleanse if there are cubes or stronghold layers
+  let iters = 0;
+  while ((tile.shadowCubes > 0 || getTile(state.board, getPlayer(state, playerId).position).strongholdLayers > 0) && state.actionsRemaining > 0 && state.status === 'playing' && iters++ < 10) {
+    if (canCleanse(state, playerId).valid) {
+      state = executeCleanse(state, playerId);
+    } else break;
+  }
+  return state;
+}
+
+function battleCurrentTile(state: GameState, playerId: string): GameState {
+  for (const enemy of [...state.enemies]) {
+    const p = getPlayer(state, playerId);
+    if (coordEqual(p.position, enemy.position) && state.actionsRemaining > 0 && state.status === 'playing') {
+      if (canBattle(state, playerId, enemy.id).valid) {
+        state = executeBattle(state, playerId, enemy.id);
+      }
+    }
+  }
+  return state;
+}
+
+function moveAndCleanse(state: GameState, playerId: string): GameState | null {
+  if (state.actionsRemaining < 2) return null;
+  const player = getPlayer(state, playerId);
+  const charDef = CHARACTERS[player.characterId];
+  const adjacent = charDef.canMoveDiagonally
+    ? getAllAdjacent(player.position)
+    : getOrthogonalAdjacent(player.position);
+
+  // Find adjacent tile with most cubes
   let bestAdj: Coord | null = null;
-  let bestCubes = 0;
+  let bestCubes = 1; // Only consider tiles with 2+ cubes
 
   for (const adj of adjacent) {
     const tile = getTile(state.board, adj);
@@ -290,98 +314,57 @@ function moveToNearbyDanger(state: GameState, playerId: string): GameState | nul
     }
   }
 
-  if (bestAdj && bestCubes > 0) {
-    let newState = executeMove(state, playerId, bestAdj);
-    if (canCleanse(newState, playerId).valid) {
-      newState = executeCleanse(newState, playerId);
-      return newState;
+  if (bestAdj) {
+    let s = executeMove(state, playerId, bestAdj);
+    if (canCleanse(s, playerId).valid) {
+      s = executeCleanse(s, playerId);
     }
-    return newState;
+    return s;
   }
-
   return null;
 }
 
-/** Random strategy turn. */
-function randomTurn(state: GameState, playerId: string): GameState {
-  let safety = 30;
-  while (state.actionsRemaining > 0 && state.status === 'playing' && safety-- > 0) {
-    const actions = enumerateAllActions(state, playerId);
-    if (actions.length === 0) break;
-    let idx: number;
-    [idx, state = { ...state }] = (() => {
-      const [v, rng] = randomInt(state.rng, 0, actions.length - 1);
-      return [v, { ...state, rng }];
-    })();
-    state = actions[idx].execute(state);
-  }
-  return state;
-}
-
-/** Enumerate all legal actions for random strategy. */
-function enumerateAllActions(state: GameState, playerId: string): ScoredAction[] {
-  const actions: ScoredAction[] = [];
-  const player = getPlayer(state, playerId);
-  const charDef = CHARACTERS[player.characterId];
-
-  const moveTargets = charDef.canMoveDiagonally
-    ? getAllAdjacent(player.position)
-    : getOrthogonalAdjacent(player.position);
-
-  for (const target of moveTargets) {
-    if (canMove(state, playerId, target).valid) {
-      actions.push({ execute: (s) => executeMove(s, playerId, target), score: 0, label: 'Move' });
+function tryEncourage(state: GameState, playerId: string): GameState | null {
+  const alive = getAlivePlayers(state);
+  for (const other of alive) {
+    if (other.id !== playerId && other.faithCurrent <= 3) {
+      if (canEncourage(state, playerId, other.id).valid) {
+        return executeEncourage(state, playerId, other.id);
+      }
     }
   }
-  if (canCleanse(state, playerId).valid) {
-    actions.push({ execute: (s) => executeCleanse(s, playerId), score: 0, label: 'Cleanse' });
-  }
-  if (canPray(state, playerId).valid) {
-    actions.push({ execute: (s) => executePray(s, playerId), score: 0, label: 'Pray' });
-  }
-  for (const enemy of state.enemies) {
-    if (coordEqual(enemy.position, player.position) && canBattle(state, playerId, enemy.id).valid) {
-      actions.push({ execute: (s) => executeBattle(s, playerId, enemy.id), score: 0, label: 'Battle' });
-    }
-  }
-  return actions;
+  return null;
 }
 
-/** Use free actions: ministry ability, anointing, scripture cards. */
-function useFreeActions(
-  state: GameState,
-  playerId: string,
-  weights: StrategyWeights,
-  _strategyId: StrategyId
-): GameState {
-  // Always use ministry (it's free)
+// ── Free Actions ─────────────────────────────────────────────────────
+
+function useFreeActions(state: GameState, playerId: string, weights: StrategyWeights, _strategyId: StrategyId): GameState {
+  // Ministry (free)
   if (canUseMinistry(state, playerId).valid) {
     const targets = buildMinistryTargets(state, playerId);
     try { state = executeMinistry(state, playerId, targets); } catch { /* skip */ }
   }
 
-  // Always use anointing (it's free and powerful)
+  // Anointing (free)
   if (canUseAnointing(state, playerId).valid) {
     const targets = buildAnointingTargets(state, playerId);
     try { state = executeAnointing(state, playerId, targets); } catch { /* skip */ }
   }
 
-  // Play scripture cards aggressively
-  const updatedPlayer = getPlayer(state, playerId);
-  for (const card of [...updatedPlayer.scriptureHand]) {
+  // Scripture cards — play aggressively
+  const player = getPlayer(state, playerId);
+  for (const card of [...player.scriptureHand]) {
     if (state.status !== 'playing') break;
     if (!canPlayScripture(state, playerId, card.instanceId).valid) continue;
-
     const targets = buildScriptureTargets(state, card.defId);
     try {
-      const nextState = executeScripture(state, playerId, card.instanceId, targets);
-      // Play most cards — only skip if it clearly hurts
-      const alwaysPlay = ['resistTheDevil', 'greaterIsHe', 'byHisStripes',
-        'lightOfTheWorld', 'perfectLoveCastsOutFear', 'theNameAboveAllNames',
-        'renewedStrength', 'heWhoIsInMe', 'theWordIsALamp', 'swordOfTheSpiritCard',
-        'putOnTheFullArmor', 'spiritOfUnity', 'whereTwoOrThreeGather', 'bindingAndLoosing'];
-      if (alwaysPlay.includes(card.defId) || scoreState(nextState, weights) >= scoreState(state, weights) - 5) {
-        state = nextState;
+      const next = executeScripture(state, playerId, card.instanceId, targets);
+      // Almost always play — only skip Sent Ones (needs complex targeting) and Spirit of Unity (conditional)
+      const skipCards = ['sentOnes'];
+      if (!skipCards.includes(card.defId)) {
+        if (scoreState(next, weights) >= scoreState(state, weights) - 10) {
+          state = next;
+        }
       }
     } catch { /* skip */ }
   }
@@ -389,11 +372,36 @@ function useFreeActions(
   return state;
 }
 
-// ── Target builders ──────────────────────────────────────────────────
+// ── Random strategy ──────────────────────────────────────────────────
+
+function randomTurn(state: GameState, playerId: string): GameState {
+  let safety = 30;
+  while (state.actionsRemaining > 0 && state.status === 'playing' && safety-- > 0) {
+    const player = getPlayer(state, playerId);
+    const charDef = CHARACTERS[player.characterId];
+    const adj = charDef.canMoveDiagonally ? getAllAdjacent(player.position) : getOrthogonalAdjacent(player.position);
+
+    const actions: Array<() => GameState> = [];
+    for (const a of adj) { if (canMove(state, playerId, a).valid) actions.push(() => executeMove(state, playerId, a)); }
+    if (canCleanse(state, playerId).valid) actions.push(() => executeCleanse(state, playerId));
+    if (canPray(state, playerId).valid) actions.push(() => executePray(state, playerId));
+    for (const e of state.enemies) {
+      if (coordEqual(e.position, player.position) && canBattle(state, playerId, e.id).valid) {
+        actions.push(() => executeBattle(state, playerId, e.id));
+      }
+    }
+    if (actions.length === 0) break;
+    let idx: number;
+    [idx, state = { ...state }] = (() => { const [v, rng] = randomInt(state.rng, 0, actions.length - 1); return [v, { ...state, rng }]; })();
+    state = actions[idx]();
+  }
+  return state;
+}
+
+// ── Target Builders ──────────────────────────────────────────────────
 
 function buildMinistryTargets(state: GameState, playerId: string) {
   const player = getPlayer(state, playerId);
-
   switch (player.characterId) {
     case 'pastor': {
       const charDef = CHARACTERS[player.characterId];
@@ -405,36 +413,40 @@ function buildMinistryTargets(state: GameState, playerId: string) {
         .slice(0, 2).map((p) => ({ targetPlayerId: p.id, amount: 1 }));
       return { faithGifts: gifts };
     }
-
     case 'apostle': {
-      // Move a player toward the most dangerous tile
+      // Move a player toward the nearest stronghold or toward Jerusalem if done
       const others = getAlivePlayers(state).filter((p) => p.id !== playerId);
       if (others.length === 0) return {};
-      const dangerTile = findMostDangerousTile(state);
-      if (!dangerTile) return {};
+      if (state.strongholdsRemaining === 0) {
+        // Rush someone to Jerusalem
+        const farthest = others.reduce((best, p) =>
+          manhattanDistance(p.position, JERUSALEM_COORD) > manhattanDistance(best.position, JERUSALEM_COORD) ? p : best
+        );
+        const step = stepCoord(farthest.position, JERUSALEM_COORD);
+        return { targetPlayerId: farthest.id, targetCoord: step };
+      }
+      const danger = findMostDangerousTile(state);
+      if (!danger) return {};
       const closest = others.reduce((best, p) =>
-        manhattanDistance(p.position, dangerTile) < manhattanDistance(best.position, dangerTile) ? p : best
+        manhattanDistance(p.position, danger) < manhattanDistance(best.position, danger) ? p : best
       );
-      const step = stepToward(closest.position, dangerTile);
+      const step = stepCoord(closest.position, danger);
       return { targetPlayerId: closest.id, targetCoord: step };
     }
-
     case 'prophet': {
       const top3 = state.darknessDeck.slice(0, 3);
       if (top3.length === 0) return {};
       const severity: Record<string, number> = {
         'creepingDark': 1, 'temptation': 2, 'accusation': 2, 'isolation': 1,
-        'encroach': 3, 'floodOfDarkness': 4, 'spreadingBlight': 5,
-        'theEnemyRages': 4, 'nightFalls': 6, 'pulse': 5, 'entrench': 4,
-        'spiritualWickednessAppears': 3, 'powerManifests': 4, 'principalityRises': 7,
+        'encroach': 3, 'floodOfDarkness': 4, 'spreadingBlight': 6,
+        'theEnemyRages': 4, 'nightFalls': 7, 'pulse': 5, 'entrench': 3,
+        'spiritualWickednessAppears': 2, 'powerManifests': 3, 'principalityRises': 8,
         'persecution': 5, 'valleyOfTheShadow': 4, 'darkNightOfTheSoul': 3,
       };
       const sorted = [...top3].sort((a, b) => (severity[a.defId] || 3) - (severity[b.defId] || 3));
       return { reorderedCardIds: sorted.map((c) => c.instanceId) };
     }
-
-    default:
-      return {};
+    default: return {};
   }
 }
 
@@ -442,24 +454,16 @@ function buildAnointingTargets(state: GameState, playerId: string) {
   const player = getPlayer(state, playerId);
   switch (player.characterId) {
     case 'evangelist': {
-      let bestCoord: Coord | undefined;
-      let bestCubes = 0;
-      for (let r = 0; r < BOARD_SIZE; r++) {
-        for (let c = 0; c < BOARD_SIZE; c++) {
-          const tile = getTile(state.board, { row: r, col: c });
-          if (tile.type === 'Shadow' && tile.shadowCubes > bestCubes) {
-            bestCubes = tile.shadowCubes;
-            bestCoord = { row: r, col: c };
-          }
-        }
+      let bestCoord: Coord | undefined, bestCubes = 0;
+      for (let r = 0; r < BOARD_SIZE; r++) for (let c = 0; c < BOARD_SIZE; c++) {
+        const t = getTile(state.board, { row: r, col: c });
+        if (t.type === 'Shadow' && t.shadowCubes > bestCubes) { bestCubes = t.shadowCubes; bestCoord = { row: r, col: c }; }
       }
       return { targetCoord: bestCoord };
     }
     case 'prophet': {
-      for (let r = 0; r < BOARD_SIZE; r++) {
-        for (let c = 0; c < BOARD_SIZE; c++) {
-          if (getTile(state.board, { row: r, col: c }).faceDown) return { revealCoord: { row: r, col: c } };
-        }
+      for (let r = 0; r < BOARD_SIZE; r++) for (let c = 0; c < BOARD_SIZE; c++) {
+        if (getTile(state.board, { row: r, col: c }).faceDown) return { revealCoord: { row: r, col: c } };
       }
       return {};
     }
@@ -475,24 +479,16 @@ function buildScriptureTargets(state: GameState, cardDefId: string) {
       return { targetPlayerId: weakest.id };
     }
     case 'resistTheDevil': {
-      const principality = state.enemies.find((e) => e.tier === 'Principality');
-      const power = state.enemies.find((e) => e.tier === 'Power');
-      const enemy = principality || power || state.enemies[0];
-      return enemy ? { targetEnemyId: enemy.id } : {};
+      const p = state.enemies.find((e) => e.tier === 'Principality') || state.enemies.find((e) => e.tier === 'Power') || state.enemies[0];
+      return p ? { targetEnemyId: p.id } : {};
     }
     case 'swordOfTheSpiritCard': {
-      let bestCoord: Coord | undefined;
-      let bestLayers = 999;
-      for (let r = 0; r < BOARD_SIZE; r++) {
-        for (let c = 0; c < BOARD_SIZE; c++) {
-          const tile = getTile(state.board, { row: r, col: c });
-          if (tile.strongholdLayers > 0 && tile.strongholdLayers < bestLayers) {
-            bestLayers = tile.strongholdLayers;
-            bestCoord = { row: r, col: c };
-          }
-        }
+      let best: Coord | undefined, bestLayers = 999;
+      for (let r = 0; r < BOARD_SIZE; r++) for (let c = 0; c < BOARD_SIZE; c++) {
+        const t = getTile(state.board, { row: r, col: c });
+        if (t.strongholdLayers > 0 && t.strongholdLayers < bestLayers) { bestLayers = t.strongholdLayers; best = { row: r, col: c }; }
       }
-      return bestCoord ? { targetStrongholdCoord: bestCoord } : {};
+      return best ? { targetStrongholdCoord: best } : {};
     }
     default: return {};
   }
@@ -501,24 +497,19 @@ function buildScriptureTargets(state: GameState, cardDefId: string) {
 // ── Helpers ──────────────────────────────────────────────────────────
 
 function findMostDangerousTile(state: GameState): Coord | null {
-  let best: Coord | null = null;
-  let bestScore = -1;
-  for (let r = 0; r < BOARD_SIZE; r++) {
-    for (let c = 0; c < BOARD_SIZE; c++) {
-      const tile = getTile(state.board, { row: r, col: c });
-      let score = tile.shadowCubes * 10;
-      if (tile.shadowCubes >= 3) score += 50;
-      if (tile.strongholdLayers > 0) score += 30;
-      for (const enemy of state.enemies) {
-        if (coordEqual(enemy.position, { row: r, col: c })) score += enemy.tier === 'Principality' ? 40 : 20;
-      }
-      if (score > bestScore) { bestScore = score; best = { row: r, col: c }; }
-    }
+  let best: Coord | null = null, bestScore = -1;
+  for (let r = 0; r < BOARD_SIZE; r++) for (let c = 0; c < BOARD_SIZE; c++) {
+    const t = getTile(state.board, { row: r, col: c });
+    let score = t.shadowCubes * 10;
+    if (t.shadowCubes >= 3) score += 80;
+    if (t.strongholdLayers > 0) score += 50;
+    for (const e of state.enemies) if (coordEqual(e.position, { row: r, col: c })) score += e.tier === 'Principality' ? 60 : 30;
+    if (score > bestScore) { bestScore = score; best = { row: r, col: c }; }
   }
   return best;
 }
 
-function stepToward(from: Coord, to: Coord): Coord {
+function stepCoord(from: Coord, to: Coord): Coord {
   return {
     row: Math.max(0, Math.min(6, from.row + Math.sign(to.row - from.row))),
     col: Math.max(0, Math.min(6, from.col + Math.sign(to.col - from.col))),

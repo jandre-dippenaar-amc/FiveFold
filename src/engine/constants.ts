@@ -693,15 +693,16 @@ export const DIFFICULTY_PRESETS: DifficultyPreset[] = [
   {
     id: 'seeker',
     name: 'Seeker (Easy)',
-    description: 'Meter at 1. +2 Scripture cards each. Remove 10 worst Darkness cards.',
+    description: 'Meter at 1. +2 Scripture cards each. Remove 15 worst Darkness cards.',
     startingDarknessMeter: 1,
     extraScriptureCards: 2,
     removedDarknessCards: [
-      // Remove the 10 most punishing cards
-      'nightFalls', 'nightFalls', 'nightFalls', 'nightFalls',
-      'principalityRises', 'principalityRises',
-      'persecution', 'persecution',
-      'spreadingBlight', 'spreadingBlight',
+      // Remove the 15 most punishing cards for a friendlier experience
+      'nightFalls', 'nightFalls', 'nightFalls', 'nightFalls',       // all Night Falls (meter+2 each)
+      'spreadingBlight', 'spreadingBlight', 'spreadingBlight',       // 3/4 Spreading Blight
+      'principalityRises', 'principalityRises', 'principalityRises', // 3/4 Principality Rises
+      'pulse', 'pulse', 'pulse',                                     // all Pulse (devastates with 7 strongholds)
+      'persecution', 'persecution',                                   // all Persecution
     ],
     powersEveryOtherRound: false,
     extraDarknessCardsPerRound: 0,
