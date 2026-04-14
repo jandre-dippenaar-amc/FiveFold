@@ -1,9 +1,10 @@
-import { useState } from 'react';
-import { runSimulation, type SimulationConfig } from '../../simulation/runner';
+import { useState, useRef, useCallback } from 'react';
+import type { SimulationConfig } from '../../simulation/runner';
 import type { SimulationResults } from '../../simulation/stats';
 import type { Difficulty } from '../../engine/types';
 import type { StrategyId } from '../../simulation/strategies';
 import { motion } from 'framer-motion';
+import SimWorker from '../../simulation/worker?worker';
 
 export function SimulationPanel({ onBack }: { onBack?: () => void } = {}) {
   const [games, setGames] = useState(100);
@@ -11,29 +12,59 @@ export function SimulationPanel({ onBack }: { onBack?: () => void } = {}) {
   const [difficulty, setDifficulty] = useState<Difficulty>('faithful');
   const [strategy, setStrategy] = useState<StrategyId>('balanced');
   const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [results, setResults] = useState<SimulationResults | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const workerRef = useRef<Worker | null>(null);
+  const startTimeRef = useRef(0);
 
-  const run = () => {
+  const run = useCallback(() => {
+    // Terminate any existing worker
+    workerRef.current?.terminate();
+
     setRunning(true);
     setResults(null);
+    setProgress({ completed: 0, total: games });
+    startTimeRef.current = Date.now();
 
-    // Use setTimeout to let the UI update before blocking
-    setTimeout(() => {
-      const start = Date.now();
-      const config: SimulationConfig = {
-        games,
-        playerCount: players,
-        difficulty,
-        strategy,
-        seed: Date.now(),
-      };
-      const r = runSimulation(config);
-      setElapsed((Date.now() - start) / 1000);
-      setResults(r);
-      setRunning(false);
-    }, 50);
-  };
+    const worker = new SimWorker();
+    workerRef.current = worker;
+
+    worker.onmessage = (e) => {
+      const msg = e.data;
+      if (msg.type === 'progress') {
+        setProgress({ completed: msg.completed, total: msg.total });
+      } else if (msg.type === 'done') {
+        setElapsed((Date.now() - startTimeRef.current) / 1000);
+        setResults(msg.results);
+        setRunning(false);
+        worker.terminate();
+        workerRef.current = null;
+      } else if (msg.type === 'error') {
+        console.error('Simulation error:', msg.error);
+        setRunning(false);
+        worker.terminate();
+        workerRef.current = null;
+      }
+    };
+
+    const config: SimulationConfig = {
+      games,
+      playerCount: players,
+      difficulty,
+      strategy,
+      seed: Date.now(),
+    };
+    worker.postMessage(config);
+  }, [games, players, difficulty, strategy]);
+
+  const cancel = useCallback(() => {
+    workerRef.current?.terminate();
+    workerRef.current = null;
+    setRunning(false);
+  }, []);
+
+  const progressPct = progress.total > 0 ? (progress.completed / progress.total) * 100 : 0;
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] p-6">
@@ -42,54 +73,42 @@ export function SimulationPanel({ onBack }: { onBack?: () => void } = {}) {
           <h1 className="text-2xl font-bold text-amber-400" style={{ fontFamily: 'Georgia, serif' }}>
             AI Simulation Lab
           </h1>
-          <button
-            onClick={() => onBack?.()}
-            className="text-xs text-slate-500 hover:text-slate-300"
-          >
+          <button onClick={() => onBack?.()} className="text-xs text-slate-500 hover:text-slate-300">
             Back to Menu
           </button>
         </div>
 
         <p className="text-sm text-slate-400">
-          Run AI-controlled games to test balance. The AI uses heuristic evaluation to make strategic decisions.
+          Run AI-controlled games to test balance. Simulations run in a background thread — the UI stays responsive.
         </p>
 
         {/* Controls */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div>
             <label className="text-[10px] text-slate-500 uppercase">Games</label>
-            <select
-              value={games}
-              onChange={(e) => setGames(Number(e.target.value))}
-              className="w-full mt-1 bg-slate-800 border border-slate-600/30 rounded px-2 py-1.5 text-sm text-slate-200"
-            >
+            <select value={games} onChange={(e) => setGames(Number(e.target.value))} disabled={running}
+              className="w-full mt-1 bg-slate-800 border border-slate-600/30 rounded px-2 py-1.5 text-sm text-slate-200 disabled:opacity-50">
               <option value={10}>10</option>
               <option value={50}>50</option>
               <option value={100}>100</option>
               <option value={250}>250</option>
               <option value={500}>500</option>
               <option value={1000}>1,000</option>
+              <option value={2000}>2,000</option>
+              <option value={5000}>5,000</option>
             </select>
           </div>
           <div>
             <label className="text-[10px] text-slate-500 uppercase">Players</label>
-            <select
-              value={players}
-              onChange={(e) => setPlayers(Number(e.target.value))}
-              className="w-full mt-1 bg-slate-800 border border-slate-600/30 rounded px-2 py-1.5 text-sm text-slate-200"
-            >
-              {[2, 3, 4, 5].map((n) => (
-                <option key={n} value={n}>{n} Players</option>
-              ))}
+            <select value={players} onChange={(e) => setPlayers(Number(e.target.value))} disabled={running}
+              className="w-full mt-1 bg-slate-800 border border-slate-600/30 rounded px-2 py-1.5 text-sm text-slate-200 disabled:opacity-50">
+              {[2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} Players</option>)}
             </select>
           </div>
           <div>
             <label className="text-[10px] text-slate-500 uppercase">Difficulty</label>
-            <select
-              value={difficulty}
-              onChange={(e) => setDifficulty(e.target.value as Difficulty)}
-              className="w-full mt-1 bg-slate-800 border border-slate-600/30 rounded px-2 py-1.5 text-sm text-slate-200"
-            >
+            <select value={difficulty} onChange={(e) => setDifficulty(e.target.value as Difficulty)} disabled={running}
+              className="w-full mt-1 bg-slate-800 border border-slate-600/30 rounded px-2 py-1.5 text-sm text-slate-200 disabled:opacity-50">
               <option value="seeker">Seeker (Easy)</option>
               <option value="faithful">Faithful (Normal)</option>
               <option value="tested">Tested (Hard)</option>
@@ -98,11 +117,8 @@ export function SimulationPanel({ onBack }: { onBack?: () => void } = {}) {
           </div>
           <div>
             <label className="text-[10px] text-slate-500 uppercase">AI Strategy</label>
-            <select
-              value={strategy}
-              onChange={(e) => setStrategy(e.target.value as StrategyId)}
-              className="w-full mt-1 bg-slate-800 border border-slate-600/30 rounded px-2 py-1.5 text-sm text-slate-200"
-            >
+            <select value={strategy} onChange={(e) => setStrategy(e.target.value as StrategyId)} disabled={running}
+              className="w-full mt-1 bg-slate-800 border border-slate-600/30 rounded px-2 py-1.5 text-sm text-slate-200 disabled:opacity-50">
               <option value="balanced">Balanced</option>
               <option value="aggressive">Aggressive</option>
               <option value="defensive">Defensive</option>
@@ -112,26 +128,36 @@ export function SimulationPanel({ onBack }: { onBack?: () => void } = {}) {
           </div>
         </div>
 
-        <button
-          onClick={run}
-          disabled={running}
-          className={`w-full py-2.5 rounded-lg font-bold transition-all ${
-            running
-              ? 'bg-slate-700 text-slate-400 cursor-wait'
-              : 'bg-amber-700 hover:bg-amber-600 text-white'
-          }`}
-        >
-          {running ? 'Running simulation...' : `Run ${games} Games`}
-        </button>
+        {/* Run / Cancel button */}
+        {running ? (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-slate-400">
+                Running... {progress.completed}/{progress.total} games ({progressPct.toFixed(0)}%)
+              </span>
+              <button onClick={cancel} className="text-red-400 hover:text-red-300 text-xs">
+                Cancel
+              </button>
+            </div>
+            <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
+              <motion.div
+                className="h-full bg-amber-500 rounded-full"
+                initial={{ width: 0 }}
+                animate={{ width: `${progressPct}%` }}
+                transition={{ duration: 0.2 }}
+              />
+            </div>
+          </div>
+        ) : (
+          <button onClick={run}
+            className="w-full py-2.5 rounded-lg font-bold bg-amber-700 hover:bg-amber-600 text-white transition-all">
+            Run {games.toLocaleString()} Games
+          </button>
+        )}
 
         {/* Results */}
         {results && (
-          <motion.div
-            className="space-y-4"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
-            {/* Summary cards */}
+          <motion.div className="space-y-4" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <ResultCard label="Win Rate" value={`${results.winRate.toFixed(1)}%`} color={results.winRate > 30 ? 'text-green-400' : results.winRate > 10 ? 'text-amber-400' : 'text-red-400'} />
               <ResultCard label="Avg Rounds" value={results.avgRounds.toFixed(1)} color="text-blue-400" />
@@ -146,27 +172,22 @@ export function SimulationPanel({ onBack }: { onBack?: () => void } = {}) {
               <ResultCard label="Avg Enemies Left" value={results.avgEnemiesAtEnd.toFixed(1)} color="text-red-400" />
             </div>
 
-            {/* Loss reasons */}
             {results.losses > 0 && (
               <div className="bg-slate-800/40 rounded-lg border border-slate-700/20 p-4">
                 <h3 className="text-xs text-slate-400 uppercase tracking-wider mb-2">Loss Reasons</h3>
                 <div className="space-y-1">
-                  {Object.entries(results.lossReasons)
-                    .sort(([, a], [, b]) => b - a)
-                    .slice(0, 5)
-                    .map(([reason, count]) => (
-                      <div key={reason} className="flex items-center justify-between text-xs">
-                        <span className="text-slate-400 truncate max-w-[300px]">{reason}</span>
-                        <span className="text-slate-300 font-mono shrink-0 ml-2">
-                          {count} ({((count / results.losses) * 100).toFixed(0)}%)
-                        </span>
-                      </div>
-                    ))}
+                  {Object.entries(results.lossReasons).sort(([, a], [, b]) => b - a).slice(0, 8).map(([reason, count]) => (
+                    <div key={reason} className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400 truncate max-w-[350px]">{reason}</span>
+                      <span className="text-slate-300 font-mono shrink-0 ml-2">
+                        {count} ({((count / results.losses) * 100).toFixed(0)}%)
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
 
-            {/* Armor unlock rates */}
             <div className="bg-slate-800/40 rounded-lg border border-slate-700/20 p-4">
               <h3 className="text-xs text-slate-400 uppercase tracking-wider mb-2">Armor Unlock Rates</h3>
               <div className="space-y-1">
@@ -184,7 +205,6 @@ export function SimulationPanel({ onBack }: { onBack?: () => void } = {}) {
               </div>
             </div>
 
-            {/* Character stats */}
             <div className="bg-slate-800/40 rounded-lg border border-slate-700/20 p-4">
               <h3 className="text-xs text-slate-400 uppercase tracking-wider mb-2">Character Stats</h3>
               <div className="space-y-1">
