@@ -89,21 +89,17 @@ export function GameLayout() {
       {/* Notifications */}
       <Notifications />
 
-      {/* Tutorial */}
-      <TutorialOverlay />
-
-      {/* Pass-and-play screen */}
-      {showPassScreen && state.status === 'playing' && !phaseEvents && (
+      {/* Overlays — only one at a time, in priority order */}
+      {showPassScreen && state.status === 'playing' && !phaseEvents ? (
         <PassAndPlayScreen onReady={dismissPassScreen} />
-      )}
-
-      {/* Phase resolution overlay */}
-      {phaseEvents && state.status === 'playing' && (
+      ) : phaseEvents && state.status === 'playing' ? (
         <PhaseResolutionOverlay
           events={phaseEvents}
           phase={phaseEventsType}
           onDone={dismissPhaseOverlay}
         />
+      ) : (
+        <TutorialOverlay />
       )}
 
       {/* Rules reference */}
