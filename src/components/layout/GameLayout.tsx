@@ -5,51 +5,93 @@ import { PhaseTracker } from '../hud/PhaseTracker';
 import { DarknessMeter } from '../hud/DarknessMeter';
 import { ArmorTrack } from '../hud/ArmorTrack';
 import { TurnLog } from '../hud/TurnLog';
+import { TutorialOverlay } from '../hud/TutorialOverlay';
+import { Notifications } from '../hud/Notifications';
 import { GameOverModal } from '../modals/GameOverModal';
+import { PassAndPlayScreen } from '../modals/PassAndPlayScreen';
+import { PhaseResolutionOverlay } from '../modals/PhaseResolutionOverlay';
 import { TOTAL_STRONGHOLDS } from '../../engine/constants';
 
 export function GameLayout() {
   const state = useGameStore((s) => s.state);
+  const showPassScreen = useGameStore((s) => s.showPassScreen);
+  const phaseEvents = useGameStore((s) => s.phaseEvents);
+  const phaseEventsType = useGameStore((s) => s.phaseEventsType);
+  const dismissPassScreen = useGameStore((s) => s.dismissPassScreen);
+  const dismissPhaseOverlay = useGameStore((s) => s.dismissPhaseOverlay);
+
   if (!state) return null;
 
   return (
-    <div className="min-h-screen flex flex-col lg:flex-row gap-4 p-4">
-      {/* Left sidebar — Character panels */}
-      <div className="lg:w-64 flex flex-row lg:flex-col gap-2 overflow-x-auto lg:overflow-x-visible">
-        {state.players.map((player, i) => (
-          <CharacterPanel
-            key={player.id}
-            player={player}
-            isActive={i === state.currentPlayerIndex && state.phase === 'Action'}
-          />
-        ))}
-      </div>
-
-      {/* Center — Board */}
-      <div className="flex-1 flex flex-col items-center gap-4">
-        <PhaseTracker />
-        <Board />
-
-        {/* Stronghold counter */}
-        <div className="text-sm text-slate-400">
-          Strongholds: <span className="text-amber-400 font-bold">{TOTAL_STRONGHOLDS - state.strongholdsRemaining}</span> / {TOTAL_STRONGHOLDS} cleansed
+    <div className="min-h-screen bg-[#0a0a0f] flex flex-col">
+      {/* Top bar */}
+      <div className="px-4 py-2 border-b border-slate-800/50 flex items-center justify-between bg-slate-900/30 shrink-0">
+        <div className="flex items-center gap-4">
+          <h1 className="text-lg font-bold text-amber-400/80" style={{ fontFamily: 'Georgia, serif' }}>Five Fold</h1>
+          <span className="text-xs text-slate-500">Round {state.round}</span>
+        </div>
+        <div className="flex items-center gap-4 text-xs text-slate-400">
+          <span>Strongholds: <span className="text-amber-400 font-bold">{TOTAL_STRONGHOLDS - state.strongholdsRemaining}</span>/{TOTAL_STRONGHOLDS}</span>
+          <span>Enemies: <span className="text-red-400">{state.enemies.length}</span></span>
+          <span>Scripture: <span className="text-blue-400">{state.scriptureDeck.length}</span></span>
+          <span>Darkness: <span className="text-purple-400">{state.darknessDeck.length}</span></span>
+          <button
+            onClick={() => useGameStore.setState({ state: null })}
+            className="text-slate-500 hover:text-red-400 transition-colors"
+          >
+            Quit
+          </button>
         </div>
       </div>
 
-      {/* Right sidebar — Meters and log */}
-      <div className="lg:w-72 flex flex-col gap-2">
-        <DarknessMeter />
-        <ArmorTrack />
-        <TurnLog />
+      {/* Main content */}
+      <div className="flex-1 flex flex-col lg:flex-row gap-3 p-3 overflow-hidden">
+        {/* Left sidebar — Character panels */}
+        <div className="lg:w-56 xl:w-64 flex flex-row lg:flex-col gap-2 overflow-x-auto lg:overflow-y-auto lg:overflow-x-hidden shrink-0">
+          {state.players.map((player, i) => (
+            <CharacterPanel
+              key={player.id}
+              player={player}
+              isActive={i === state.currentPlayerIndex && state.phase === 'Action'}
+            />
+          ))}
+        </div>
 
-        {/* Deck status */}
-        <div className="flex gap-2 text-xs text-slate-400 p-2">
-          <span>Scripture: {state.scriptureDeck.length}</span>
-          <span>Darkness: {state.darknessDeck.length}</span>
-          <span>Enemies: {state.enemies.length}</span>
+        {/* Center — Board */}
+        <div className="flex-1 flex flex-col items-center gap-3 min-w-0">
+          <PhaseTracker />
+          <Board />
+        </div>
+
+        {/* Right sidebar — Meters and log */}
+        <div className="lg:w-64 xl:w-72 flex flex-col gap-2 shrink-0">
+          <DarknessMeter />
+          <ArmorTrack />
+          <TurnLog />
         </div>
       </div>
 
+      {/* Notifications */}
+      <Notifications />
+
+      {/* Tutorial */}
+      <TutorialOverlay />
+
+      {/* Pass-and-play screen */}
+      {showPassScreen && state.status === 'playing' && !phaseEvents && (
+        <PassAndPlayScreen onReady={dismissPassScreen} />
+      )}
+
+      {/* Phase resolution overlay */}
+      {phaseEvents && state.status === 'playing' && (
+        <PhaseResolutionOverlay
+          events={phaseEvents}
+          phase={phaseEventsType}
+          onDone={dismissPhaseOverlay}
+        />
+      )}
+
+      {/* Game over */}
       <GameOverModal />
     </div>
   );

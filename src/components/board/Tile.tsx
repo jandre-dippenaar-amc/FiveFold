@@ -1,21 +1,35 @@
+import { useState } from 'react';
 import type { TileState } from '../../engine/types';
 import { CHARACTERS, CHARACTER_COLORS, JERUSALEM_COORD } from '../../engine/constants';
 import { useGameStore } from '../../store/gameStore';
 import { coordEqual } from '../../utils/grid';
 import { motion } from 'framer-motion';
 
-const TILE_COLORS: Record<string, string> = {
-  Light: 'bg-slate-700/60',
-  Shadow: 'bg-slate-900/80',
-  Stronghold: 'bg-red-950/80 border-red-800/50',
-  BrokenGround: 'bg-amber-950/60',
-  HighPlace: 'bg-cyan-950/60',
-  Jerusalem: 'bg-amber-600/30 border-amber-400/60',
+const TILE_BG: Record<string, string> = {
+  Light: 'bg-indigo-900/40 border-indigo-700/30',
+  Shadow: 'bg-slate-950/70 border-purple-900/40',
+  Stronghold: 'bg-red-950/60 border-red-700/50',
+  BrokenGround: 'bg-amber-950/40 border-amber-800/30',
+  HighPlace: 'bg-sky-950/40 border-sky-700/30',
+  Jerusalem: 'bg-amber-800/30 border-amber-500/60',
+};
+
+const TILE_ICONS: Record<string, string> = {
+  Jerusalem: '✦',
+  Stronghold: '🏛',
+  HighPlace: '⛰',
+  BrokenGround: '⚠',
+  Light: '',
+  Shadow: '',
 };
 
 export function Tile({ tile }: { tile: TileState }) {
-  const { state, selectedTile, validMoveTargets } = useGameStore();
-  const store = useGameStore();
+  const state = useGameStore((s) => s.state);
+  const selectedTile = useGameStore((s) => s.selectedTile);
+  const validMoveTargets = useGameStore((s) => s.validMoveTargets);
+  const move = useGameStore((s) => s.move);
+  const selectTile = useGameStore((s) => s.selectTile);
+  const [hovered, setHovered] = useState(false);
 
   if (!state) return null;
 
@@ -23,109 +37,138 @@ export function Tile({ tile }: { tile: TileState }) {
   const isValidTarget = validMoveTargets.some((t) => coordEqual(t, tile.coord));
   const isJerusalem = coordEqual(tile.coord, JERUSALEM_COORD);
   const currentPlayer = state.players[state.currentPlayerIndex];
-  const isPlayerTile = currentPlayer && coordEqual(currentPlayer.position, tile.coord);
+  const isCurrentPlayerTile = currentPlayer && !currentPlayer.isEliminated && coordEqual(currentPlayer.position, tile.coord);
+
+  const playersOnTile = state.players.filter((p) => !p.isEliminated && coordEqual(p.position, tile.coord));
+  const enemiesOnTile = state.enemies.filter((e) => coordEqual(e.position, tile.coord));
 
   const handleClick = () => {
     if (state.phase !== 'Action') return;
     if (isValidTarget) {
-      store.move(tile.coord);
-    } else if (isPlayerTile) {
-      store.selectTile(tile.coord);
+      move(tile.coord);
+    } else if (isCurrentPlayerTile) {
+      selectTile(isSelected ? null : tile.coord);
     }
   };
+
+  const tooltipLines: string[] = [];
+  if (!tile.faceDown) {
+    tooltipLines.push(`${tile.type} (${tile.coord.row},${tile.coord.col})`);
+    if (tile.shadowCubes > 0) tooltipLines.push(`Shadow Cubes: ${tile.shadowCubes}`);
+    if (tile.strongholdLayers > 0) tooltipLines.push(`Stronghold: ${tile.strongholdLayers} layers`);
+    if (tile.prayerToken) tooltipLines.push('Prayer Token active');
+    for (const p of playersOnTile) tooltipLines.push(`${CHARACTERS[p.characterId].name}`);
+    for (const e of enemiesOnTile) tooltipLines.push(`${e.tier} (${e.hitsRemaining} HP)`);
+  } else {
+    tooltipLines.push(`Unknown (${tile.coord.row},${tile.coord.col})`);
+  }
 
   return (
     <motion.div
       className={`
-        relative w-full aspect-square rounded-md border cursor-pointer
+        relative w-full aspect-square rounded border cursor-pointer select-none
         transition-all duration-150 overflow-hidden
-        ${tile.faceDown ? 'bg-slate-800/90 border-slate-600/30' : TILE_COLORS[tile.type] || 'bg-slate-700/60'}
-        ${isSelected ? 'ring-2 ring-amber-400' : ''}
-        ${isValidTarget ? 'ring-2 ring-emerald-400/70 bg-emerald-900/20' : ''}
-        ${isJerusalem && !tile.faceDown ? 'shadow-[0_0_15px_rgba(202,138,4,0.3)]' : ''}
-        border-slate-600/20
+        ${tile.faceDown ? 'bg-slate-800/80 border-slate-600/20' : TILE_BG[tile.type] || 'bg-slate-800/40 border-slate-600/20'}
+        ${isSelected ? 'ring-2 ring-amber-400 z-10' : ''}
+        ${isValidTarget ? 'ring-2 ring-green-400/80 z-10' : ''}
+        ${isCurrentPlayerTile && state.phase === 'Action' ? 'ring-1 ring-amber-300/40' : ''}
+        ${isJerusalem && !tile.faceDown ? 'shadow-[0_0_20px_rgba(202,138,4,0.25)]' : ''}
       `}
       onClick={handleClick}
-      whileHover={{ scale: 1.05 }}
-      whileTap={{ scale: 0.95 }}
-      layout
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      whileHover={{ scale: 1.06 }}
+      whileTap={{ scale: 0.94 }}
     >
-      {/* Tile type indicator */}
-      {!tile.faceDown && (
-        <div className="absolute top-0.5 left-1 text-[8px] text-slate-400 font-mono">
-          {tile.type === 'Jerusalem' ? '✦' : tile.type === 'Stronghold' ? '⬛' : tile.type === 'HighPlace' ? '▲' : tile.type === 'BrokenGround' ? '░' : ''}
+      {/* Tile type icon */}
+      {!tile.faceDown && TILE_ICONS[tile.type] && (
+        <div className="absolute top-0 left-0.5 text-[9px] opacity-50">
+          {TILE_ICONS[tile.type]}
         </div>
       )}
 
-      {/* Face-down overlay */}
+      {/* Face-down */}
       {tile.faceDown && (
-        <div className="absolute inset-0 flex items-center justify-center text-slate-500 text-lg">?</div>
+        <div className="absolute inset-0 flex items-center justify-center text-slate-600 text-base font-serif">?</div>
       )}
 
-      {/* Shadow cubes */}
+      {/* Shadow cubes — top right corner */}
       {tile.shadowCubes > 0 && !tile.faceDown && (
-        <div className="absolute top-0.5 right-1 flex gap-0.5">
+        <div className="absolute top-0.5 right-0.5 flex gap-px">
           {Array.from({ length: Math.min(tile.shadowCubes, 4) }).map((_, i) => (
             <div
               key={i}
-              className={`w-2 h-2 rounded-sm ${
-                tile.shadowCubes >= 3 ? 'bg-red-600' : 'bg-slate-950'
-              } border border-slate-600/50`}
+              className={`w-[6px] h-[6px] rounded-[1px] ${
+                tile.shadowCubes >= 4 ? 'bg-red-500 animate-pulse' :
+                tile.shadowCubes >= 3 ? 'bg-red-600' :
+                'bg-gray-800'
+              } border border-gray-600/40`}
             />
           ))}
         </div>
       )}
 
-      {/* Stronghold layers */}
+      {/* Stronghold pillar */}
       {tile.strongholdLayers > 0 && (
-        <div className="absolute bottom-0.5 left-1 text-[9px] text-red-400 font-bold">
-          ⬛{tile.strongholdLayers}
+        <div className="absolute bottom-0 left-0.5 text-[8px] text-red-400/80 font-bold font-mono">
+          L{tile.strongholdLayers}
         </div>
       )}
 
       {/* Prayer token */}
       {tile.prayerToken && (
-        <div className="absolute bottom-0.5 right-1 text-[10px]">🙏</div>
+        <div className="absolute bottom-0 right-0.5 text-[8px] text-amber-300">+</div>
       )}
 
-      {/* Player tokens */}
-      <div className="absolute inset-0 flex items-center justify-center gap-0.5 flex-wrap p-1">
-        {state.players
-          .filter((p) => !p.isEliminated && coordEqual(p.position, tile.coord))
-          .map((p) => (
+      {/* Player and enemy tokens — centered */}
+      <div className="absolute inset-0 flex items-center justify-center gap-px flex-wrap p-0.5">
+        {playersOnTile.map((p) => {
+          const idx = state.players.indexOf(p);
+          const isActive = idx === state.currentPlayerIndex;
+          return (
             <div
               key={p.id}
-              className="w-4 h-4 rounded-full border-2 flex items-center justify-center text-[7px] font-bold text-white"
-              style={{
-                backgroundColor: CHARACTER_COLORS[p.characterId],
-                borderColor: state.currentPlayerIndex === state.players.indexOf(p) ? '#fbbf24' : 'transparent',
-              }}
-            >
-              {CHARACTERS[p.characterId].name[4]}
-            </div>
-          ))}
-
-        {/* Enemy tokens */}
-        {state.enemies
-          .filter((e) => coordEqual(e.position, tile.coord))
-          .map((e) => (
-            <div
-              key={e.id}
-              className={`w-4 h-4 rounded-full flex items-center justify-center text-[8px] ${
-                e.tier === 'Principality' ? 'bg-purple-800 text-purple-200' :
-                e.tier === 'Power' ? 'bg-orange-800 text-orange-200' :
-                'bg-gray-700 text-gray-300'
+              className={`w-[14px] h-[14px] rounded-full flex items-center justify-center text-[6px] font-bold text-white shadow-sm ${
+                isActive ? 'ring-1 ring-white/80' : ''
               }`}
+              style={{ backgroundColor: CHARACTER_COLORS[p.characterId] }}
+              title={CHARACTERS[p.characterId].name}
             >
-              {e.tier === 'Principality' ? '👑' : e.tier === 'Power' ? '🔥' : '💀'}
+              {CHARACTERS[p.characterId].name.charAt(4).toUpperCase()}
             </div>
-          ))}
+          );
+        })}
+
+        {enemiesOnTile.map((e) => (
+          <div
+            key={e.id}
+            className={`w-[14px] h-[14px] rounded flex items-center justify-center text-[7px] ${
+              e.tier === 'Principality' ? 'bg-purple-700 text-white' :
+              e.tier === 'Power' ? 'bg-orange-700 text-white' :
+              'bg-gray-600 text-gray-200'
+            }`}
+            title={`${e.tier} (${e.hitsRemaining} HP)`}
+          >
+            {e.tier === 'Principality' ? 'P' : e.tier === 'Power' ? 'W' : 'w'}
+          </div>
+        ))}
       </div>
 
-      {/* Coord label */}
-      <div className="absolute bottom-0 right-0 text-[6px] text-slate-500 px-0.5">
-        {tile.coord.row},{tile.coord.col}
-      </div>
+      {/* Valid move indicator */}
+      {isValidTarget && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="w-3 h-3 rounded-full bg-green-400/30 border border-green-400/60 animate-pulse" />
+        </div>
+      )}
+
+      {/* Tooltip */}
+      {hovered && (
+        <div className="absolute z-50 left-1/2 -translate-x-1/2 bottom-full mb-1 px-2 py-1 bg-slate-900/95 border border-slate-600/50 rounded text-[9px] text-slate-300 whitespace-nowrap pointer-events-none shadow-lg">
+          {tooltipLines.map((line, i) => (
+            <div key={i} className={i === 0 ? 'font-semibold text-slate-100' : ''}>{line}</div>
+          ))}
+        </div>
+      )}
     </motion.div>
   );
 }

@@ -10,14 +10,16 @@ interface GameStore {
   state: GameState | null;
   selectedTile: Coord | null;
   validMoveTargets: Coord[];
-  animating: boolean;
   gameLog: string[];
+  showPassScreen: boolean;
+  phaseEvents: string[] | null;
+  phaseEventsType: string;
 
-  // Actions
   newGame: (config: GameConfig) => void;
   selectTile: (coord: Coord | null) => void;
+  dismissPassScreen: () => void;
+  dismissPhaseOverlay: () => void;
 
-  // Player actions
   move: (target: Coord) => void;
   cleanse: () => void;
   battle: (enemyId: string) => void;
@@ -28,25 +30,29 @@ interface GameStore {
   useMinistry: (targets?: MinistryTargets) => void;
   useAnointing: (targets?: AnointingTargets) => void;
 
-  // Phase progression
   endTurn: () => void;
   advanceToNextPhase: () => void;
   runAutomatedPhases: () => void;
+}
+
+function updateFromState(state: GameState) {
+  return { state, gameLog: state.log.map((e) => e.description) };
 }
 
 export const useGameStore = create<GameStore>((set, get) => ({
   state: null,
   selectedTile: null,
   validMoveTargets: [],
-  animating: false,
   gameLog: [],
+  showPassScreen: false,
+  phaseEvents: null,
+  phaseEventsType: '',
 
   newGame: (config) => {
-    const state = createGameState(config);
-    // Start Prayer Phase then begin first player turn
-    let s = executePrayerPhase(state);
+    let s = createGameState(config);
+    s = executePrayerPhase(s);
     s = beginPlayerTurn(s, 0);
-    set({ state: s, selectedTile: null, validMoveTargets: [], gameLog: s.log.map(e => e.description) });
+    set({ ...updateFromState(s), selectedTile: null, validMoveTargets: [], showPassScreen: true, phaseEvents: null });
   },
 
   selectTile: (coord) => {
@@ -55,9 +61,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({ selectedTile: coord, validMoveTargets: [] });
       return;
     }
-
     if (coord) {
-      // Calculate valid move targets from this tile
       const player = getCurrentPlayer(state);
       if (player && !player.isEliminated) {
         const targets: Coord[] = [];
@@ -75,93 +79,95 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
   },
 
+  dismissPassScreen: () => set({ showPassScreen: false }),
+
+  dismissPhaseOverlay: () => {
+    const { state } = get();
+    if (!state) return;
+
+    // After dismissing phase overlay, start next round
+    if (state.status === 'playing') {
+      let s = state;
+      s = advanceRound(s);
+      s = executePrayerPhase(s);
+      s = beginPlayerTurn(s, 0);
+      set({ ...updateFromState(s), phaseEvents: null, showPassScreen: true, selectedTile: null, validMoveTargets: [] });
+    } else {
+      set({ phaseEvents: null });
+    }
+  },
+
   move: (target) => {
     const { state } = get();
     if (!state) return;
     const player = getCurrentPlayer(state);
     try {
       const next = executeMove(state, player.id, target);
-      set({ state: next, selectedTile: null, validMoveTargets: [], gameLog: next.log.map(e => e.description) });
+      set({ ...updateFromState(next), selectedTile: null, validMoveTargets: [] });
     } catch (e) { console.error(e); }
   },
 
   cleanse: () => {
     const { state } = get();
     if (!state) return;
-    const player = getCurrentPlayer(state);
     try {
-      const next = executeCleanse(state, player.id);
-      set({ state: next, gameLog: next.log.map(e => e.description) });
+      set(updateFromState(executeCleanse(state, getCurrentPlayer(state).id)));
     } catch (e) { console.error(e); }
   },
 
   battle: (enemyId) => {
     const { state } = get();
     if (!state) return;
-    const player = getCurrentPlayer(state);
     try {
-      const next = executeBattle(state, player.id, enemyId);
-      set({ state: next, gameLog: next.log.map(e => e.description) });
+      set(updateFromState(executeBattle(state, getCurrentPlayer(state).id, enemyId)));
     } catch (e) { console.error(e); }
   },
 
   pray: () => {
     const { state } = get();
     if (!state) return;
-    const player = getCurrentPlayer(state);
     try {
-      const next = executePray(state, player.id);
-      set({ state: next, gameLog: next.log.map(e => e.description) });
+      set(updateFromState(executePray(state, getCurrentPlayer(state).id)));
     } catch (e) { console.error(e); }
   },
 
   encourage: (targetPlayerId) => {
     const { state } = get();
     if (!state) return;
-    const player = getCurrentPlayer(state);
     try {
-      const next = executeEncourage(state, player.id, targetPlayerId);
-      set({ state: next, gameLog: next.log.map(e => e.description) });
+      set(updateFromState(executeEncourage(state, getCurrentPlayer(state).id, targetPlayerId)));
     } catch (e) { console.error(e); }
   },
 
   fortify: () => {
     const { state } = get();
     if (!state) return;
-    const player = getCurrentPlayer(state);
     try {
-      const next = executeFortify(state, player.id);
-      set({ state: next, gameLog: next.log.map(e => e.description) });
+      set(updateFromState(executeFortify(state, getCurrentPlayer(state).id)));
     } catch (e) { console.error(e); }
   },
 
   playScripture: (cardInstanceId, targets) => {
     const { state } = get();
     if (!state) return;
-    const player = getCurrentPlayer(state);
     try {
-      const next = executeScripture(state, player.id, cardInstanceId, targets);
-      set({ state: next, gameLog: next.log.map(e => e.description) });
+      set(updateFromState(executeScripture(state, getCurrentPlayer(state).id, cardInstanceId, targets)));
     } catch (e) { console.error(e); }
   },
 
   useMinistry: (targets) => {
     const { state } = get();
     if (!state) return;
-    const player = getCurrentPlayer(state);
     try {
-      const next = executeMinistry(state, player.id, targets);
-      set({ state: next, gameLog: next.log.map(e => e.description) });
+      set(updateFromState(executeMinistry(state, getCurrentPlayer(state).id, targets)));
     } catch (e) { console.error(e); }
   },
 
   useAnointing: (targets) => {
     const { state } = get();
     if (!state) return;
-    const player = getCurrentPlayer(state);
     try {
-      const next = executeAnointing(state, player.id, targets);
-      set({ state: next, gameLog: next.log.map(e => e.description) });
+      set(updateFromState(executeAnointing(state, getCurrentPlayer(state).id, targets)));
     } catch (e) { console.error(e); }
   },
 
@@ -169,18 +175,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { state } = get();
     if (!state || state.phase !== 'Action') return;
 
-    // Find next alive player
     let nextIndex = state.currentPlayerIndex + 1;
     while (nextIndex < state.players.length && state.players[nextIndex].isEliminated) {
       nextIndex++;
     }
 
     if (nextIndex < state.players.length) {
-      // Next player's turn
       const next = beginPlayerTurn(state, nextIndex);
-      set({ state: next, selectedTile: null, validMoveTargets: [], gameLog: next.log.map(e => e.description) });
+      set({ ...updateFromState(next), selectedTile: null, validMoveTargets: [], showPassScreen: true });
     } else {
-      // All players done — run automated phases
       get().runAutomatedPhases();
     }
   },
@@ -193,28 +196,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
     let { state } = get();
     if (!state) return;
 
-    // Darkness Phase
-    if (state.status === 'playing') {
-      state = executeDarknessPhase(state);
-    }
+    const logBefore = state.log.length;
 
-    // Enemy Phase
-    if (state.status === 'playing') {
-      state = executeEnemyPhase(state);
-    }
+    if (state.status === 'playing') state = executeDarknessPhase(state);
+    if (state.status === 'playing') state = executeEnemyPhase(state);
+    if (state.status === 'playing') state = executeCheckPhase(state);
 
-    // Check Phase
-    if (state.status === 'playing') {
-      state = executeCheckPhase(state);
-    }
+    // Collect events from the automated phases
+    const newEvents = state.log.slice(logBefore).map((e) => e.description);
 
-    // If still playing, advance to next round
-    if (state.status === 'playing') {
-      state = advanceRound(state);
-      state = executePrayerPhase(state);
-      state = beginPlayerTurn(state, 0);
-    }
-
-    set({ state, selectedTile: null, validMoveTargets: [], gameLog: state.log.map(e => e.description) });
+    set({
+      ...updateFromState(state),
+      selectedTile: null,
+      validMoveTargets: [],
+      phaseEvents: newEvents.length > 0 ? newEvents : null,
+      phaseEventsType: 'Darkness / Enemy / Check',
+    });
   },
 }));
