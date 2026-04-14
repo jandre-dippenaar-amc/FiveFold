@@ -212,6 +212,8 @@ export function createGameState(config: GameConfig): GameState {
     lossReason: null,
     nextEnemyId: 1,
     nextCardInstanceId: nextCardId + nextDarknessId,
+    greaterIsHeActive: false,
+    heWhoIsInMeActive: false,
   };
 
   return addLog(state, 'Prayer', `Game started with ${config.playerCount} players on ${preset.name} difficulty.`);

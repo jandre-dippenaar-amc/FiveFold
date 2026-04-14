@@ -18,7 +18,7 @@ import { getOrthogonalAdjacent } from '../utils/grid';
 /** Execute the Prayer Phase — all players draw Scripture to hand limit. */
 export function executePrayerPhase(state: GameState): GameState {
   state = addLog(state, 'Prayer', `--- Round ${state.round} — Prayer Phase ---`);
-  state = { ...state, phase: 'Prayer', shieldOfFaithUsedThisRound: false };
+  state = { ...state, phase: 'Prayer', shieldOfFaithUsedThisRound: false, greaterIsHeActive: false, heWhoIsInMeActive: false };
 
   // Reset per-round flags
   state = {

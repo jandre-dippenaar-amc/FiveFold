@@ -339,4 +339,7 @@ export interface GameState {
   lossReason: string | null;
   nextEnemyId: number;
   nextCardInstanceId: number;
+  // Round effects (reset each round)
+  greaterIsHeActive: boolean; // "Greater is He" — all battles auto-succeed this round
+  heWhoIsInMeActive: boolean; // "He Who is in Me" — cancel next darkness card
 }

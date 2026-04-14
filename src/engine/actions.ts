@@ -254,6 +254,29 @@ export function executeBattle(
 
   state = { ...state, actionsRemaining: state.actionsRemaining - 1 };
 
+  // Check for "Greater is He" — auto-succeed all battles this round
+  if (state.greaterIsHeActive) {
+    const autoHits = enemyDef.hitsRequired;
+    const newHitsRemaining = Math.max(0, enemy.hitsRemaining - autoHits);
+    if (newHitsRemaining <= 0) {
+      state = { ...state, enemies: state.enemies.filter((e) => e.id !== enemyId) };
+      state = addLog(state, state.phase, `${CHARACTERS[player.characterId].name} defeated ${enemy.tier} (Greater is He — auto-success)!`);
+      if (enemy.tier === 'Principality') {
+        state = checkArmorUnlock(state, true);
+      }
+      if (enemy.tier === 'Power' && state.scriptureDeck.length > 0) {
+        const card = state.scriptureDeck[0];
+        state = { ...state, scriptureDeck: state.scriptureDeck.slice(1) };
+        const updatedPlayer = getPlayer(state, playerId);
+        state = updatePlayer(state, playerId, { scriptureHand: [...updatedPlayer.scriptureHand, card] });
+      }
+    } else {
+      state = { ...state, enemies: state.enemies.map((e) => e.id === enemyId ? { ...e, hitsRemaining: newHitsRemaining } : e) };
+      state = addLog(state, state.phase, `${CHARACTERS[player.characterId].name} hit ${enemy.tier} (Greater is He — auto-success). ${newHitsRemaining} HP remaining.`);
+    }
+    return state;
+  }
+
   // Roll dice
   let results: number[];
   [results, state = { ...state }] = (() => {

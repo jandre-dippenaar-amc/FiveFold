@@ -133,7 +133,7 @@ function resolveScriptureEffect(
     }
 
     case 'greaterIsHe': {
-      // All battles auto-succeed this round — tracked via log/flag
+      state = { ...state, greaterIsHeActive: true };
       state = addLog(state, state.phase, 'Greater is He — all Battle checks auto-succeed this round!');
       return state;
     }
@@ -285,7 +285,7 @@ function resolveScriptureEffect(
     }
 
     case 'heWhoIsInMe': {
-      // Cancel the next Darkness card drawn this phase
+      state = { ...state, heWhoIsInMeActive: true };
       state = addLog(state, state.phase, 'He Who is in Me — next Darkness card will be cancelled.');
       return state;
     }
@@ -312,6 +312,20 @@ export function drawAndResolveDarknessCard(state: GameState): GameState {
     state = addLog(state, state.phase, 'Darkness deck exhausted — reshuffled, Meter +1!');
 
     if (state.darknessDeck.length === 0) return state;
+  }
+
+  // "He Who is in Me" — cancel the next darkness card
+  if (state.heWhoIsInMeActive) {
+    const cancelled = state.darknessDeck[0];
+    const cancelledDef = DARKNESS_CARDS.find((d) => d.id === cancelled.defId);
+    state = {
+      ...state,
+      darknessDeck: state.darknessDeck.slice(1),
+      darknessDiscard: [...state.darknessDiscard, cancelled],
+      heWhoIsInMeActive: false,
+    };
+    state = addLog(state, state.phase, `He Who is in Me cancelled "${cancelledDef?.name}"!`);
+    return state;
   }
 
   const card = state.darknessDeck[0];
