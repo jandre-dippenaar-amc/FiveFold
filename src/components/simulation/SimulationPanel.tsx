@@ -80,19 +80,24 @@ export function SimulationPanel({ onBack }: { onBack?: () => void } = {}) {
       const worker = new SimWorker();
       workerRef.current = worker;
 
-      // Watchdog timer — if worker doesn't respond in 5s, it OOM'd silently
-      const watchdog = setTimeout(() => {
-        console.warn(`Worker timed out at game ${completed}. Killing and skipping batch.`);
-        worker.terminate();
-        workerRef.current = null;
-        completed += batchSize;
-        setTimeout(runNextBatch, 50);
-      }, 5000);
+      // Rolling watchdog — resets on every message, fires if worker goes silent
+      let watchdog: ReturnType<typeof setTimeout>;
+      const resetWatchdog = () => {
+        clearTimeout(watchdog);
+        watchdog = setTimeout(() => {
+          console.warn(`Worker silent for 5s at game ${completed}. Killing and skipping.`);
+          worker.terminate();
+          workerRef.current = null;
+          completed += batchSize;
+          setTimeout(runNextBatch, 50);
+        }, 5000);
+      };
+      resetWatchdog();
 
       // Catch explicit crashes
       worker.onerror = () => {
         clearTimeout(watchdog);
-        console.warn(`Worker crashed at game ${completed}. Skipping batch.`);
+        console.warn(`Worker crashed at game ${completed}. Skipping.`);
         worker.terminate();
         workerRef.current = null;
         completed += batchSize;
@@ -100,7 +105,7 @@ export function SimulationPanel({ onBack }: { onBack?: () => void } = {}) {
       };
 
       worker.onmessage = (e) => {
-        clearTimeout(watchdog); // Worker is alive
+        resetWatchdog(); // Worker is alive — reset the timer
         const msg = e.data;
         if (msg.type === 'progress') {
           setProgress({ completed: completed + msg.completed, total: games });
@@ -134,12 +139,14 @@ export function SimulationPanel({ onBack }: { onBack?: () => void } = {}) {
           setProgress({ completed, total: games });
 
           // Kill this worker to free its memory
+          clearTimeout(watchdog);
           worker.terminate();
           workerRef.current = null;
 
           // Schedule next batch — gives browser time to GC
           setTimeout(runNextBatch, 10);
         } else if (msg.type === 'error') {
+          clearTimeout(watchdog);
           console.error('Simulation batch error:', msg.error);
           worker.terminate();
           workerRef.current = null;
