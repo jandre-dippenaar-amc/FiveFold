@@ -157,20 +157,20 @@ export function CharacterPanel({ player, isActive }: { player: PlayerState; isAc
       {canDoActions && (
         <div className="flex flex-wrap gap-1">
           {canCleanse(state, player.id).valid && (
-            <ActionBtn onClick={() => useGameStore.getState().cleanse()} color="emerald" label="Cleanse" />
+            <ActionBtn onClick={() => useGameStore.getState().cleanse()} color="emerald" label="Cleanse" tooltip="Remove 1 Shadow Cube from your tile (1 action)" />
           )}
           {state.enemies.some((e) => coordEqual(e.position, player.position)) && (() => {
             const enemy = state.enemies.find((e) => coordEqual(e.position, player.position));
             return enemy && canBattle(state, player.id, enemy.id).valid ? (
-              <ActionBtn onClick={() => useGameStore.getState().battle(enemy.id)} color="red" label={`Battle ${enemy.tier}`} />
+              <ActionBtn onClick={() => useGameStore.getState().battle(enemy.id)} color="red" label={`Battle ${enemy.tier}`} tooltip={`Roll dice to hit ${enemy.tier} (1 action)`} />
             ) : null;
           })()}
           {canPray(state, player.id).valid && (
-            <ActionBtn onClick={() => useGameStore.getState().pray()} color="amber" label="Pray" />
+            <ActionBtn onClick={() => useGameStore.getState().pray()} color="amber" label="Pray" tooltip="Restore 1 Faith token (1 action)" />
           )}
           {encourageTargets.length > 0 && (
             <div className="relative">
-              <ActionBtn onClick={() => setShowEncouragePicker(!showEncouragePicker)} color="pink" label="Encourage" />
+              <ActionBtn onClick={() => setShowEncouragePicker(!showEncouragePicker)} color="pink" label="Encourage" tooltip="Give 1 Faith to an adjacent player (1 action)" />
               <AnimatePresence>
                 {showEncouragePicker && (
                   <motion.div
@@ -197,16 +197,16 @@ export function CharacterPanel({ player, isActive }: { player: PlayerState; isAc
             </div>
           )}
           {canUseMinistry(state, player.id).valid && (
-            <ActionBtn onClick={() => useGameStore.getState().useMinistry()} color="blue" label={charDef.ministryAbility.name} />
+            <ActionBtn onClick={() => useGameStore.getState().useMinistry()} color="blue" label={charDef.ministryAbility.name} tooltip={`FREE — ${charDef.ministryAbility.description}`} />
           )}
-          <ActionBtn onClick={() => useGameStore.getState().endTurn()} color="slate" label="End Turn" className="ml-auto" />
+          <ActionBtn onClick={() => useGameStore.getState().endTurn()} color="slate" label="End Turn" tooltip="Pass to the next player" className="ml-auto" />
         </div>
       )}
     </div>
   );
 }
 
-function ActionBtn({ onClick, color, label, className = '' }: { onClick: () => void; color: string; label: string; className?: string }) {
+function ActionBtn({ onClick, color, label, tooltip, className = '' }: { onClick: () => void; color: string; label: string; tooltip?: string; className?: string }) {
   const colorMap: Record<string, string> = {
     emerald: 'bg-emerald-700/60 hover:bg-emerald-600/60 text-emerald-200',
     red: 'bg-red-700/60 hover:bg-red-600/60 text-red-200',
@@ -218,6 +218,7 @@ function ActionBtn({ onClick, color, label, className = '' }: { onClick: () => v
   return (
     <button
       onClick={onClick}
+      title={tooltip}
       className={`px-2 py-0.5 text-[10px] rounded transition-all ${colorMap[color] || colorMap.slate} ${className}`}
     >
       {label}
