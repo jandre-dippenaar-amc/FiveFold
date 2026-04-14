@@ -66,9 +66,11 @@ export function GameLayout() {
         </div>
 
         {/* Center — Board */}
-        <div className="flex-1 flex flex-col items-center gap-3 min-w-0">
+        <div className="flex-1 flex flex-col items-center gap-3 min-w-0 min-h-0">
           <PhaseTracker />
-          <Board />
+          <div className="flex-1 w-full flex items-center justify-center min-h-0">
+            <Board />
+          </div>
         </div>
 
         {/* Right sidebar — Meters and log */}

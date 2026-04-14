@@ -68,7 +68,7 @@ export function Tile({ tile }: { tile: TileState }) {
       className={`
         relative w-full aspect-square rounded border cursor-pointer select-none
         transition-all duration-150 overflow-hidden
-        ${tile.faceDown ? 'bg-slate-800/80 border-slate-600/20' : TILE_BG[tile.type] || 'bg-slate-800/40 border-slate-600/20'}
+        ${tile.faceDown ? 'bg-slate-700/50 border-slate-500/30' : TILE_BG[tile.type] || 'bg-slate-800/40 border-slate-600/20'}
         ${isSelected ? 'ring-2 ring-amber-400 z-10' : ''}
         ${isValidTarget ? 'ring-2 ring-green-400/80 z-10' : ''}
         ${isCurrentPlayerTile && state.phase === 'Action' ? 'ring-1 ring-amber-300/40' : ''}
