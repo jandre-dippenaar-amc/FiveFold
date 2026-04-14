@@ -36,15 +36,25 @@ interface GameStore {
 }
 
 function updateFromState(state: GameState) {
-  return { state, gameLog: state.log.map((e) => e.description) };
+  // Auto-save to localStorage
+  try { localStorage.setItem('fivefold_save', JSON.stringify(state)); } catch { /* ignore */ }
+  return { state, gameLog: state.log.map((e) => e.description), validMoveTargets: [] as Coord[] };
+}
+
+function loadSavedGame(): GameState | null {
+  try {
+    const saved = localStorage.getItem('fivefold_save');
+    if (saved) return JSON.parse(saved);
+  } catch { /* ignore */ }
+  return null;
 }
 
 export const useGameStore = create<GameStore>((set, get) => ({
-  state: null,
+  state: loadSavedGame(),
   selectedTile: null,
   validMoveTargets: [],
-  gameLog: [],
-  showPassScreen: false,
+  gameLog: loadSavedGame()?.log.map((e) => e.description) || [],
+  showPassScreen: !!loadSavedGame(),
   phaseEvents: null,
   phaseEventsType: '',
 
@@ -57,13 +67,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   selectTile: (coord) => {
     const { state } = get();
-    if (!state || state.phase !== 'Action') {
+    if (!state) {
       set({ selectedTile: coord, validMoveTargets: [] });
       return;
     }
     if (coord) {
+      // Only compute move targets if it's Action phase AND clicking the current player's tile
       const player = getCurrentPlayer(state);
-      if (player && !player.isEliminated) {
+      const isPlayerTile = player && !player.isEliminated &&
+        coord.row === player.position.row && coord.col === player.position.col;
+
+      if (state.phase === 'Action' && isPlayerTile && state.actionsRemaining > 0) {
         const targets: Coord[] = [];
         for (let r = 0; r < 7; r++) {
           for (let c = 0; c < 7; c++) {
@@ -73,6 +87,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
           }
         }
         set({ selectedTile: coord, validMoveTargets: targets });
+      } else {
+        // Just show tile info, no move targets
+        set({ selectedTile: coord, validMoveTargets: [] });
       }
     } else {
       set({ selectedTile: null, validMoveTargets: [] });
