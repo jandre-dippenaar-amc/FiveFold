@@ -5,7 +5,7 @@ import type { Difficulty } from '../../engine/types';
 import type { StrategyId } from '../../simulation/strategies';
 import { motion } from 'framer-motion';
 
-export function SimulationPanel() {
+export function SimulationPanel({ onBack }: { onBack?: () => void } = {}) {
   const [games, setGames] = useState(100);
   const [players, setPlayers] = useState(5);
   const [difficulty, setDifficulty] = useState<Difficulty>('faithful');
@@ -43,7 +43,7 @@ export function SimulationPanel() {
             AI Simulation Lab
           </h1>
           <button
-            onClick={() => window.history.back()}
+            onClick={() => onBack?.()}
             className="text-xs text-slate-500 hover:text-slate-300"
           >
             Back to Menu
