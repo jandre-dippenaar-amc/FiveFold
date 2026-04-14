@@ -360,7 +360,7 @@ export const SCRIPTURE_CARDS: ScriptureCardDef[] = [
     cardType: 'Cleansing',
     scriptureReference: 'Psalm 119:105',
     effect:
-      'Reveal all face-down tiles on the board. The Prophet may reorder 3 Darkness cards.',
+      'Reveal all face-down tiles within 3 spaces. The Prophet may reorder 3 Darkness cards.',
     powerLevel: 'Powerful',
     bestUsedBy: 'Prophet synergy — reveals tiles AND reorders deck',
   },
@@ -404,7 +404,7 @@ export const DARKNESS_CARDS: DarknessCardDef[] = [
     category: 'ShadowSpread',
     severity: 'High',
     effect:
-      'Add 2 Shadow Cubes to 2 different tiles (enemy targets the tiles with the most players on or adjacent).',
+      'Add 1 Shadow Cube to 2 random tiles adjacent to players.',
     target: '2 tiles with most player proximity',
     countInDeck: 5,
     darknessMeterImpact: 0,
@@ -415,7 +415,7 @@ export const DARKNESS_CARDS: DarknessCardDef[] = [
     category: 'ShadowSpread',
     severity: 'High',
     effect:
-      'Add 1 Shadow Cube to every tile that currently has at least 1 cube on it.',
+      'Add 1 Shadow Cube to every tile that currently has 2 or more cubes on it.',
     target: 'All tiles with existing Shadow Cubes',
     countInDeck: 4,
     darknessMeterImpact: 0,

@@ -117,18 +117,20 @@ function resolveScriptureEffect(
     }
 
     case 'theWordIsALamp': {
-      // Reveal all face-down tiles
+      // Reveal face-down tiles within 3 spaces of the player (practical for physical play)
       let board = state.board;
+      let revealed = 0;
       for (let r = 0; r < 7; r++) {
         for (let c = 0; c < 7; c++) {
-          const tile = board[r][c];
-          if (tile.faceDown) {
+          const dist = manhattanDistance(player.position, { row: r, col: c });
+          if (dist <= 3 && board[r][c].faceDown) {
             board = updateTile(board, { row: r, col: c }, { faceDown: false });
+            revealed++;
           }
         }
       }
       state = { ...state, board };
-      state = addLog(state, state.phase, 'The Word is a Lamp — all tiles revealed!');
+      state = addLog(state, state.phase, `The Word is a Lamp — revealed ${revealed} tiles within 3 spaces!`);
       return state;
     }
 
@@ -383,20 +385,37 @@ function resolveDarknessEffect(state: GameState, cardId: DarknessCardId): GameSt
     }
 
     case 'floodOfDarkness': {
-      // Add 2 cubes to 2 different tiles with most player proximity
-      const tiles = findTilesWithMostPlayerProximity(state, 2);
-      for (const coord of tiles) {
-        state = { ...state, board: addCubes(state.board, coord, 1) };
+      // Add 1 cube to 2 random tiles adjacent to players (practical: just pick from neighbors)
+      const alive = getAlivePlayers(state);
+      const adjacentTiles: Coord[] = [];
+      for (const p of alive) {
+        for (const adj of getOrthogonalAdjacent(p.position)) {
+          if (!adjacentTiles.some((t) => coordEqual(t, adj))) {
+            adjacentTiles.push(adj);
+          }
+        }
+      }
+      // Pick up to 2 random adjacent tiles
+      for (let i = 0; i < 2 && adjacentTiles.length > 0; i++) {
+        let picked: Coord;
+        [picked, state = { ...state }] = (() => {
+          const [v, rng] = randomPick(state.rng, adjacentTiles);
+          return [v, { ...state, rng }];
+        })();
+        state = { ...state, board: addCubes(state.board, picked, 1) };
+        // Remove picked so we don't pick it twice
+        const idx = adjacentTiles.findIndex((t) => coordEqual(t, picked));
+        if (idx >= 0) adjacentTiles.splice(idx, 1);
       }
       return state;
     }
 
     case 'spreadingBlight': {
-      // Add 1 cube to every tile that has at least 1 cube
+      // Add 1 cube to every tile with 2+ cubes (practical: fewer tiles to check)
       for (let r = 0; r < 7; r++) {
         for (let c = 0; c < 7; c++) {
           const tile = getTile(state.board, { row: r, col: c });
-          if (tile.shadowCubes > 0) {
+          if (tile.shadowCubes >= 2) {
             state = { ...state, board: addCubes(state.board, { row: r, col: c }, 1) };
           }
         }
@@ -629,27 +648,6 @@ function resolveDarknessEffect(state: GameState, cardId: DarknessCardId): GameSt
 }
 
 // ── Card Helpers ──────────────────────────────────────────────────────
-
-/** Find N tiles with the most player proximity (for Flood of Darkness). */
-function findTilesWithMostPlayerProximity(state: GameState, count: number): Coord[] {
-  const alive = getAlivePlayers(state);
-  const scores: Array<{ coord: Coord; score: number }> = [];
-
-  for (let r = 0; r < 7; r++) {
-    for (let c = 0; c < 7; c++) {
-      const coord = { row: r, col: c };
-      let score = 0;
-      for (const p of alive) {
-        const dist = manhattanDistance(coord, p.position);
-        score += Math.max(0, 7 - dist); // Closer = higher score
-      }
-      scores.push({ coord, score });
-    }
-  }
-
-  scores.sort((a, b) => b.score - a.score);
-  return scores.slice(0, count).map((s) => s.coord);
-}
 
 /** Find N tiles with the most shadow cubes (for Night Falls). */
 function findTilesWithMostCubes(state: GameState, count: number): Coord[] {
