@@ -25,43 +25,55 @@ export interface SimulationResults {
 
 export function createEmptyResults(): SimulationResults {
   return {
-    gamesPlayed: 0,
-    wins: 0,
-    losses: 0,
-    winRate: 0,
-    avgRounds: 0,
-    medianRounds: 0,
-    maxRounds: 0,
-    minRounds: 0,
-    lossReasons: {},
-    avgDarknessMeterAtEnd: 0,
-    armorUnlockRates: {},
-    avgStrongholdsCleansed: 0,
-    avgTotalCubesRemoved: 0,
-    avgEnemiesAtEnd: 0,
+    gamesPlayed: 0, wins: 0, losses: 0, winRate: 0,
+    avgRounds: 0, medianRounds: 0, maxRounds: 0, minRounds: 0,
+    lossReasons: {}, avgDarknessMeterAtEnd: 0, armorUnlockRates: {},
+    avgStrongholdsCleansed: 0, avgTotalCubesRemoved: 0, avgEnemiesAtEnd: 0,
     characterStats: {},
   };
 }
 
+/**
+ * Lightweight stats collector using running sums instead of per-game arrays.
+ * Only keeps a small sample of round values for the median.
+ */
 export class StatsCollector {
-  private rounds: number[] = [];
-  private meterAtEnd: number[] = [];
-  private strongholdsCleansed: number[] = [];
-  private cubesRemoved: number[] = [];
-  private enemiesAtEnd: number[] = [];
+  private count = 0;
   private wins = 0;
   private losses = 0;
+  private sumRounds = 0;
+  private sumMeter = 0;
+  private sumStrongholds = 0;
+  private sumCubesRemoved = 0;
+  private sumEnemies = 0;
+  private maxRounds = 0;
+  private minRounds = Infinity;
   private lossReasons: Record<string, number> = {};
   private armorCounts: Record<string, number> = {};
-  private charFaith: Record<string, number[]> = {};
+  private charFaithSum: Record<string, number> = {};
+  private charFaithCount: Record<string, number> = {};
   private charEliminated: Record<string, number> = {};
+  // Keep a reservoir sample of round values for median (max 500 samples)
+  private roundSamples: number[] = [];
 
   record(finalState: GameState): void {
-    this.rounds.push(finalState.round);
-    this.meterAtEnd.push(finalState.darknessMeter);
-    this.strongholdsCleansed.push(TOTAL_STRONGHOLDS - finalState.strongholdsRemaining);
-    this.cubesRemoved.push(finalState.totalCubesRemoved);
-    this.enemiesAtEnd.push(finalState.enemies.length);
+    this.count++;
+    this.sumRounds += finalState.round;
+    this.sumMeter += finalState.darknessMeter;
+    this.sumStrongholds += TOTAL_STRONGHOLDS - finalState.strongholdsRemaining;
+    this.sumCubesRemoved += finalState.totalCubesRemoved;
+    this.sumEnemies += finalState.enemies.length;
+
+    if (finalState.round > this.maxRounds) this.maxRounds = finalState.round;
+    if (finalState.round < this.minRounds) this.minRounds = finalState.round;
+
+    // Reservoir sampling for median
+    if (this.roundSamples.length < 500) {
+      this.roundSamples.push(finalState.round);
+    } else {
+      const j = Math.floor(Math.random() * this.count);
+      if (j < 500) this.roundSamples[j] = finalState.round;
+    }
 
     if (finalState.status === 'won') {
       this.wins++;
@@ -77,19 +89,53 @@ export class StatsCollector {
 
     for (const player of finalState.players) {
       const cid = player.characterId;
-      if (!this.charFaith[cid]) this.charFaith[cid] = [];
-      this.charFaith[cid].push(player.faithCurrent);
+      this.charFaithSum[cid] = (this.charFaithSum[cid] || 0) + player.faithCurrent;
+      this.charFaithCount[cid] = (this.charFaithCount[cid] || 0) + 1;
       if (player.isEliminated) {
         this.charEliminated[cid] = (this.charEliminated[cid] || 0) + 1;
       }
     }
   }
 
+  /** Merge pre-computed batch results (for worker batching). */
+  mergeBatchResults(results: SimulationResults, batchSize: number): void {
+    this.count += batchSize;
+    this.wins += results.wins;
+    this.losses += results.losses;
+    this.sumRounds += results.avgRounds * batchSize;
+    this.sumMeter += results.avgDarknessMeterAtEnd * batchSize;
+    this.sumStrongholds += results.avgStrongholdsCleansed * batchSize;
+    this.sumCubesRemoved += results.avgTotalCubesRemoved * batchSize;
+    this.sumEnemies += results.avgEnemiesAtEnd * batchSize;
+    if (results.maxRounds > this.maxRounds) this.maxRounds = results.maxRounds;
+    if (results.minRounds < this.minRounds) this.minRounds = results.minRounds;
+
+    for (const [reason, count] of Object.entries(results.lossReasons)) {
+      this.lossReasons[reason] = (this.lossReasons[reason] || 0) + count;
+    }
+    // Armor rates are percentages — convert back to counts
+    for (const piece of ARMOR_PIECES) {
+      const rate = results.armorUnlockRates[piece.name] || 0;
+      const count = Math.round((rate / 100) * batchSize);
+      this.armorCounts[piece.id] = (this.armorCounts[piece.id] || 0) + count;
+    }
+    for (const [cid, stats] of Object.entries(results.characterStats)) {
+      const n = batchSize; // approximate
+      this.charFaithSum[cid] = (this.charFaithSum[cid] || 0) + stats.avgFaithAtEnd * n;
+      this.charFaithCount[cid] = (this.charFaithCount[cid] || 0) + n;
+      this.charEliminated[cid] = (this.charEliminated[cid] || 0) + stats.timesEliminated;
+    }
+    // Use the batch median as a sample
+    if (this.roundSamples.length < 500) {
+      this.roundSamples.push(results.medianRounds);
+    }
+  }
+
   getResults(): SimulationResults {
-    const n = this.rounds.length;
+    const n = this.count;
     if (n === 0) return createEmptyResults();
 
-    const sorted = [...this.rounds].sort((a, b) => a - b);
+    const sorted = [...this.roundSamples].sort((a, b) => a - b);
 
     const armorUnlockRates: Record<string, number> = {};
     for (const piece of ARMOR_PIECES) {
@@ -97,11 +143,12 @@ export class StatsCollector {
     }
 
     const characterStats: Record<string, any> = {};
-    for (const [cid, faithArr] of Object.entries(this.charFaith)) {
+    for (const cid of Object.keys(this.charFaithSum)) {
+      const cnt = this.charFaithCount[cid] || 1;
       characterStats[cid] = {
-        avgFaithAtEnd: avg(faithArr),
+        avgFaithAtEnd: this.charFaithSum[cid] / cnt,
         timesEliminated: this.charEliminated[cid] || 0,
-        avgScriptureCardsPlayed: 0, // would need tracking in engine
+        avgScriptureCardsPlayed: 0,
       };
     }
 
@@ -110,24 +157,19 @@ export class StatsCollector {
       wins: this.wins,
       losses: this.losses,
       winRate: (this.wins / n) * 100,
-      avgRounds: avg(this.rounds),
-      medianRounds: sorted[Math.floor(n / 2)],
-      maxRounds: sorted[n - 1],
-      minRounds: sorted[0],
+      avgRounds: this.sumRounds / n,
+      medianRounds: sorted.length > 0 ? sorted[Math.floor(sorted.length / 2)] : 0,
+      maxRounds: this.maxRounds,
+      minRounds: this.minRounds === Infinity ? 0 : this.minRounds,
       lossReasons: this.lossReasons,
-      avgDarknessMeterAtEnd: avg(this.meterAtEnd),
+      avgDarknessMeterAtEnd: this.sumMeter / n,
       armorUnlockRates,
-      avgStrongholdsCleansed: avg(this.strongholdsCleansed),
-      avgTotalCubesRemoved: avg(this.cubesRemoved),
-      avgEnemiesAtEnd: avg(this.enemiesAtEnd),
+      avgStrongholdsCleansed: this.sumStrongholds / n,
+      avgTotalCubesRemoved: this.sumCubesRemoved / n,
+      avgEnemiesAtEnd: this.sumEnemies / n,
       characterStats,
     };
   }
-}
-
-function avg(arr: number[]): number {
-  if (arr.length === 0) return 0;
-  return arr.reduce((s, v) => s + v, 0) / arr.length;
 }
 
 /** Format results as a readable string table. */
@@ -156,6 +198,5 @@ export function formatResults(results: SimulationResults): string {
   for (const [cid, stats] of Object.entries(results.characterStats)) {
     lines.push(`  ${cid}: avgFaith=${stats.avgFaithAtEnd.toFixed(1)}, eliminated=${stats.timesEliminated}`);
   }
-
   return lines.join('\n');
 }
