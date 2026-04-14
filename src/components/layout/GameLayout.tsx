@@ -71,6 +71,11 @@ export function GameLayout() {
           <div className="flex-1 w-full flex items-center justify-center min-h-0">
             <Board />
           </div>
+          {state.phase === 'Action' && (
+            <div className="text-xs text-slate-500 text-center">
+              Click your character's pulsing tile to see move targets, then click a green tile to move
+            </div>
+          )}
         </div>
 
         {/* Right sidebar — Meters and log */}

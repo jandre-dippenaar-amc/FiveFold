@@ -10,7 +10,7 @@ export function PhaseTracker() {
   const currentPlayer = state.players[state.currentPlayerIndex];
 
   return (
-    <div className="flex flex-col gap-2 p-3 bg-slate-800/60 rounded-lg border border-slate-700/30">
+    <div className="flex flex-col gap-2 p-3 bg-slate-800/60 rounded-lg border border-slate-700/30 w-full max-w-md">
       <div className="flex items-center justify-between">
         <span className="text-sm text-slate-400">Round {state.round}</span>
         <span className="text-sm font-mono text-amber-400">{state.phase} Phase</span>
