@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { Board } from '../board/Board';
 import { CharacterPanel } from '../characters/CharacterPanel';
@@ -10,6 +11,7 @@ import { Notifications } from '../hud/Notifications';
 import { GameOverModal } from '../modals/GameOverModal';
 import { PassAndPlayScreen } from '../modals/PassAndPlayScreen';
 import { PhaseResolutionOverlay } from '../modals/PhaseResolutionOverlay';
+import { RulesReference } from '../modals/RulesReference';
 import { TOTAL_STRONGHOLDS } from '../../engine/constants';
 
 export function GameLayout() {
@@ -19,6 +21,8 @@ export function GameLayout() {
   const phaseEventsType = useGameStore((s) => s.phaseEventsType);
   const dismissPassScreen = useGameStore((s) => s.dismissPassScreen);
   const dismissPhaseOverlay = useGameStore((s) => s.dismissPhaseOverlay);
+
+  const [showRules, setShowRules] = useState(false);
 
   if (!state) return null;
 
@@ -33,8 +37,12 @@ export function GameLayout() {
         <div className="flex items-center gap-4 text-xs text-slate-400">
           <span>Strongholds: <span className="text-amber-400 font-bold">{TOTAL_STRONGHOLDS - state.strongholdsRemaining}</span>/{TOTAL_STRONGHOLDS}</span>
           <span>Enemies: <span className="text-red-400">{state.enemies.length}</span></span>
-          <span>Scripture: <span className="text-blue-400">{state.scriptureDeck.length}</span></span>
-          <span>Darkness: <span className="text-purple-400">{state.darknessDeck.length}</span></span>
+          <button
+            onClick={() => setShowRules(true)}
+            className="text-blue-400 hover:text-blue-300 transition-colors"
+          >
+            Rules
+          </button>
           <button
             onClick={() => useGameStore.setState({ state: null })}
             className="text-slate-500 hover:text-red-400 transition-colors"
@@ -90,6 +98,9 @@ export function GameLayout() {
           onDone={dismissPhaseOverlay}
         />
       )}
+
+      {/* Rules reference */}
+      {showRules && <RulesReference onClose={() => setShowRules(false)} />}
 
       {/* Game over */}
       <GameOverModal />
