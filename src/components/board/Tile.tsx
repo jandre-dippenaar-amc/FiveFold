@@ -43,10 +43,12 @@ export function Tile({ tile }: { tile: TileState }) {
   const enemiesOnTile = state.enemies.filter((e) => coordEqual(e.position, tile.coord));
 
   const handleClick = () => {
-    if (state.phase !== 'Action') return;
-    if (isValidTarget) {
+    if (isValidTarget && state.phase === 'Action') {
       move(tile.coord);
-    } else if (isCurrentPlayerTile) {
+    } else if (isCurrentPlayerTile && state.phase === 'Action') {
+      selectTile(isSelected ? null : tile.coord);
+    } else {
+      // Click any tile to see its details
       selectTile(isSelected ? null : tile.coord);
     }
   };

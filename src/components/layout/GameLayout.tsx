@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { Board } from '../board/Board';
+import { TileDetail } from '../board/TileDetail';
 import { CharacterPanel } from '../characters/CharacterPanel';
 import { PhaseTracker } from '../hud/PhaseTracker';
 import { DarknessMeter } from '../hud/DarknessMeter';
@@ -73,13 +74,14 @@ export function GameLayout() {
           </div>
           {state.phase === 'Action' && (
             <div className="text-xs text-slate-500 text-center">
-              Click your character's pulsing tile to see move targets, then click a green tile to move
+              Click your character's pulsing tile to move, or click any tile for details
             </div>
           )}
         </div>
 
-        {/* Right sidebar — Meters and log */}
-        <div className="lg:w-64 xl:w-72 flex flex-col gap-2 shrink-0">
+        {/* Right sidebar — Meters, tile detail, and log */}
+        <div className="lg:w-64 xl:w-72 flex flex-col gap-2 shrink-0 overflow-y-auto">
+          <TileDetail />
           <DarknessMeter />
           <ArmorTrack />
           <TurnLog />
